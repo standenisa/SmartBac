@@ -8,7 +8,7 @@ venv/
 *.egg-info/
 .pytest_cache/
 
-# Flask
+# Flask/FastAPI
 instance/
 .env
 
@@ -34,3 +34,25 @@ Thumbs.db
 
 # Logs
 *.log
+
+# ML Models & Data (large files)
+*.pkl
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.gguf
+ai/finetune/adapters/
+ai/transformer/checkpoints/
+ai/tokenizer/math_bpe.json
+backend/models/*.pkl
+data/processed/*.json
+data/raw/*.json
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# MLX
+mlx_models/

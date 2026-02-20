@@ -1,0 +1,34 @@
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-dotenv>=1.0.0
+pydantic[email]>=2.5.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+alembic>=1.13.0
+
+# Auth
+PyJWT>=2.8.0
+werkzeug>=3.0.0
+
+# ML Dependencies
+scikit-learn>=1.3.0
+numpy>=1.24.0
+xgboost>=2.0.0
+
+# Deep Learning (for Transformer)
+torch>=2.1.0
+
+# MLX (Apple Silicon only - install separately)
+# mlx>=0.4.0
+# mlx-lm>=0.3.0
+
+# Legacy (keep for backward compatibility during migration)
+pymongo>=4.6.1
+dnspython>=2.4.2
+
+# Testing
+pytest>=7.4.0
+httpx>=0.25.0
