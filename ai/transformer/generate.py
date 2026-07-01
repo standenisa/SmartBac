@@ -35,12 +35,16 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from ai.tokenizer.bpe import MathBPETokenizer
 from ai.transformer.model import MathTransformer
-from ai.transformer.config import MathTransformerConfig
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Funcția principală de generare
-# ═══════════════════════════════════════════════════════════════════════
+def pick_device() -> torch.device:
+    """Alege cel mai bun device disponibil: MPS > CUDA > CPU."""
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
 
 def generate(
     prompt: str,
@@ -52,29 +56,11 @@ def generate(
     top_k: int = 50,
 ) -> str:
     """
-    Generează un răspuns pentru un prompt de matematică.
+    Generează răspunsul pentru un prompt de matematică (întrebare → text generat).
 
-    Procesul:
-        1. Tokenizează prompt-ul: <BOS> + encode(prompt) + <SEP>
-        2. Trimite la model.generate() cu top-k sampling
-        3. Decodează tokenii generați înapoi în text
-        4. Returnează doar partea generată (fără prompt)
-
-    Args:
-        prompt:         Textul întrebării (ex: "Rezolvă ecuația: 2x + 3 = 7").
-        model:          Modelul MathTransformer antrenat.
-        tokenizer:      Tokenizer-ul BPE.
-        device:         Device-ul pe care rulează modelul.
-        max_new_tokens: Numărul maxim de tokeni de generat.
-        temperature:    Temperatura de sampling.
-        top_k:          Câți tokeni candidați la fiecare pas.
-
-    Returns:
-        Textul generat (răspuns + pași de rezolvare).
+    Construiește secvența <BOS> prompt <SEP>, generează autoregresiv cu
+    top-k sampling și returnează doar partea generată, fără prompt.
     """
-    # ── Tokenizăm prompt-ul ──
-    # Format: <BOS> prompt_tokens <SEP>
-    # <SEP> marchează: "acum generează răspunsul"
     bos_idx = MathBPETokenizer.SPECIAL_TOKENS["<BOS>"]
     sep_idx = MathBPETokenizer.SPECIAL_TOKENS["<SEP>"]
     eos_idx = MathBPETokenizer.SPECIAL_TOKENS["<EOS>"]
@@ -82,7 +68,6 @@ def generate(
     prompt_ids = [bos_idx] + tokenizer.encode(prompt) + [sep_idx]
     input_tensor = torch.tensor([prompt_ids], dtype=torch.long).to(device)
 
-    # ── Generare autoregresivă ──
     output_tensor = model.generate(
         input_tensor,
         max_new_tokens=max_new_tokens,
@@ -91,47 +76,16 @@ def generate(
         eos_idx=eos_idx,
     )
 
-    # ── Decodăm doar partea generată (fără prompt) ──
-    full_ids = output_tensor[0].tolist()
-    generated_ids = full_ids[len(prompt_ids):]
+    # Decodăm doar partea generată (fără prompt); strip_special elimină <EOS>/<PAD>
+    generated_ids = output_tensor[0].tolist()[len(prompt_ids):]
+    return tokenizer.decode(generated_ids, strip_special=True)
 
-    # Eliminăm tokenii speciali din output (<PAD>, <EOS>)
-    pad_idx = MathBPETokenizer.SPECIAL_TOKENS["<PAD>"]
-    clean_ids = []
-    for tid in generated_ids:
-        if tid == eos_idx:
-            break  # Ne oprim la <EOS>
-        if tid == pad_idx:
-            continue  # Sărim <PAD>
-        clean_ids.append(tid)
-
-    # Decodăm token IDs → text
-    generated_text = tokenizer.decode(clean_ids)
-
-    return generated_text
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Funcții de încărcare
-# ═══════════════════════════════════════════════════════════════════════
 
 def load_model_and_tokenizer(
     checkpoint_path: str | None = None,
     tokenizer_path: str | None = None,
 ) -> tuple[MathTransformer, MathBPETokenizer, torch.device]:
-    """
-    Încarcă modelul antrenat și tokenizer-ul.
-
-    Args:
-        checkpoint_path: Calea către checkpoint-ul modelului (.pt).
-                         Dacă None, folosește calea implicită.
-        tokenizer_path:  Calea către tokenizer-ul salvat (.json).
-                         Dacă None, folosește calea implicită.
-
-    Returns:
-        (model, tokenizer, device) — gata de utilizare.
-    """
-    # ── Căi implicite ──
+    """Încarcă modelul antrenat și tokenizer-ul; returnează (model, tokenizer, device)."""
     if checkpoint_path is None:
         checkpoint_path = str(
             _PROJECT_ROOT / "ai" / "transformer" / "checkpoints" / "best_model.pt"
@@ -141,7 +95,6 @@ def load_model_and_tokenizer(
             _PROJECT_ROOT / "ai" / "tokenizer" / "math_bpe.json"
         )
 
-    # ── Verificăm existența fișierelor ──
     if not os.path.exists(checkpoint_path):
         print(f"[EROARE] Checkpoint-ul nu a fost găsit: {checkpoint_path}")
         print("  Antrenează mai întâi: python -m ai.transformer.train")
@@ -152,30 +105,18 @@ def load_model_and_tokenizer(
         print("  Antrenează mai întâi: python -m ai.tokenizer.train_tokenizer")
         sys.exit(1)
 
-    # ── Device ──
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
+    device = pick_device()
     print(f"[DEVICE] {device}")
 
-    # ── Tokenizer ──
     tokenizer = MathBPETokenizer()
     tokenizer.load(tokenizer_path)
     print(f"[TOKENIZER] Încărcat: {len(tokenizer)} tokeni")
 
-    # ── Model ──
     model = MathTransformer.from_pretrained(checkpoint_path, device=str(device))
     print(f"[MODEL] Încărcat din {checkpoint_path}")
 
     return model, tokenizer, device
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# Mod interactiv
-# ═══════════════════════════════════════════════════════════════════════
 
 def interactive_mode(
     model: MathTransformer,
@@ -221,10 +162,6 @@ def interactive_mode(
         print(result)
         print("-" * 40 + "\n")
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# CLI entry-point
-# ═══════════════════════════════════════════════════════════════════════
 
 def main():
     """Punct de intrare CLI pentru generare."""
@@ -278,23 +215,16 @@ def main():
         )
         return
 
-    # Mod single-prompt
+    # Mod single-prompt (cu fallback pe un prompt implicit)
     if args.prompt:
-        result = generate(
-            args.prompt, model, tokenizer, device,
-            max_new_tokens=args.max_tokens,
-            temperature=args.temperature,
-            top_k=args.top_k,
-        )
-        print(f"\nPrompt: {args.prompt}")
-        print(f"Răspuns: {result}")
-        return
+        prompt = args.prompt
+        print(f"\nPrompt: {prompt}")
+    else:
+        prompt = "Rezolvă ecuația: 2x + 3 = 7"
+        print(f"\nNiciun prompt specificat. Folosesc: \"{prompt}\"")
 
-    # Dacă nu s-a specificat nimic, prompt implicit
-    default_prompt = "Rezolvă ecuația: 2x + 3 = 7"
-    print(f"\nNiciun prompt specificat. Folosesc: \"{default_prompt}\"")
     result = generate(
-        default_prompt, model, tokenizer, device,
+        prompt, model, tokenizer, device,
         max_new_tokens=args.max_tokens,
         temperature=args.temperature,
         top_k=args.top_k,

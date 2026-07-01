@@ -10,6 +10,25 @@ from database import get_db
 router = APIRouter(prefix="/api/stats", tags=["statistics"])
 
 
+def _accuracy_pipeline(user_id: int, group_field: str) -> list:
+    """Aggregate a user's attempts into per-{group_field} attempt/correct counts."""
+    return [
+        {"$match": {"user_id": user_id}},
+        {"$lookup": {
+            "from": "exercises",
+            "localField": "exercise_id",
+            "foreignField": "_id",
+            "as": "exercise",
+        }},
+        {"$unwind": "$exercise"},
+        {"$group": {
+            "_id": f"$exercise.{group_field}",
+            "attempts": {"$sum": 1},
+            "correct": {"$sum": {"$cond": ["$is_correct", 1, 0]}},
+        }},
+    ]
+
+
 @router.get("")
 def get_stats(user_id: int = Query(1), db=Depends(get_db)):
     total = db.attempts.count_documents({"user_id": user_id})
@@ -24,22 +43,7 @@ def get_stats(user_id: int = Query(1), db=Depends(get_db)):
 
 @router.get("/detailed")
 def get_detailed_stats(user_id: int = Query(1), db=Depends(get_db)):
-    pipeline = [
-        {"$match": {"user_id": user_id}},
-        {"$lookup": {
-            "from": "exercises",
-            "localField": "exercise_id",
-            "foreignField": "_id",
-            "as": "exercise",
-        }},
-        {"$unwind": "$exercise"},
-        {"$group": {
-            "_id": "$exercise.subject",
-            "attempts": {"$sum": 1},
-            "correct": {"$sum": {"$cond": ["$is_correct", 1, 0]}},
-        }},
-    ]
-    results = list(db.attempts.aggregate(pipeline))
+    results = list(db.attempts.aggregate(_accuracy_pipeline(user_id, "subject")))
 
     stats = {
         "total": {"attempts": 0, "correct": 0, "accuracy": 0},
@@ -63,6 +67,21 @@ def get_detailed_stats(user_id: int = Query(1), db=Depends(get_db)):
     t = stats["total"]
     t["accuracy"] = round((t["correct"] / t["attempts"]) * 100, 2) if t["attempts"] > 0 else 0
 
+    # Topic-level breakdown
+    topic_results = list(db.attempts.aggregate(_accuracy_pipeline(user_id, "topic")))
+
+    topics = {}
+    for row in topic_results:
+        a = row["attempts"]
+        c = row["correct"]
+        topics[row["_id"]] = {
+            "attempts": a,
+            "correct": c,
+            "accuracy": round((c / a) * 100, 2) if a > 0 else 0,
+        }
+
+    stats["topics"] = topics
+
     return stats
 
 
@@ -71,22 +90,7 @@ def get_analytics_detailed(user_id: int = Query(1), db=Depends(get_db)):
     """Detailed analytics: per-topic accuracy, 30-day trend, study time, predicted grade."""
 
     # ── Per-topic accuracy ──
-    topic_pipeline = [
-        {"$match": {"user_id": user_id}},
-        {"$lookup": {
-            "from": "exercises",
-            "localField": "exercise_id",
-            "foreignField": "_id",
-            "as": "exercise",
-        }},
-        {"$unwind": "$exercise"},
-        {"$group": {
-            "_id": "$exercise.topic",
-            "attempts": {"$sum": 1},
-            "correct": {"$sum": {"$cond": ["$is_correct", 1, 0]}},
-        }},
-    ]
-    topic_results = list(db.attempts.aggregate(topic_pipeline))
+    topic_results = list(db.attempts.aggregate(_accuracy_pipeline(user_id, "topic")))
 
     topics = []
     for row in topic_results:
@@ -148,4 +152,29 @@ def get_analytics_detailed(user_id: int = Query(1), db=Depends(get_db)):
         "predictedGrade": predicted_grade,
         "totalAttempts": total_attempts,
         "totalCorrect": total_correct,
+    }
+
+
+@router.get("/activity")
+def get_activity_heatmap(user_id: int = Query(1), days: int = Query(90), db=Depends(get_db)):
+    """Activity heatmap data — exercises per day for the last N days."""
+    start_date = datetime.utcnow() - timedelta(days=days)
+
+    pipeline = [
+        {"$match": {"user_id": user_id, "created_at": {"$gte": start_date}}},
+        {"$group": {
+            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+            "count": {"$sum": 1},
+        }},
+        {"$sort": {"_id": 1}},
+    ]
+
+    results = list(db.attempts.aggregate(pipeline))
+    activity = {row["_id"]: row["count"] for row in results}
+
+    return {
+        "success": True,
+        "activity": activity,
+        "total_days": len(activity),
+        "total_exercises": sum(activity.values()),
     }

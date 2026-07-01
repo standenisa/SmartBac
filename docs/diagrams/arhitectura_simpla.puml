@@ -1,0 +1,26 @@
+@startuml Arhitectura Simpla SmartBAC
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 18
+skinparam defaultFontName Helvetica
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam roundCorner 15
+
+skinparam rectangle {
+    BorderThickness 2
+    FontStyle bold
+}
+skinparam ArrowThickness 2
+skinparam ArrowColor #444444
+
+rectangle "📱 Aplicație mobilă\n(React Native)" as FE #E3F2FD
+rectangle "⚙️ Backend\n(FastAPI)" as BE #E8F5E9
+database "🗄️ MongoDB" as DB #FFF3E0
+cloud "🤖 Modele AI\n(Kaggle GPU)" as AI #F3E5F5
+
+FE -right-> BE : REST / JSON
+BE -right-> DB : citește / scrie
+BE -down-> AI : chat · scanare
+
+@enduml

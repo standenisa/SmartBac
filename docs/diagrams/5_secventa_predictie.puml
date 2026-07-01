@@ -1,0 +1,56 @@
+@startuml Secventa Predictie Nota BAC
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 12
+
+
+actor "Elev" as Student
+participant "Frontend\n(React Native)" as FE
+participant "Backend\n(FastAPI)" as BE
+database "MongoDB" as DB
+participant "Feature\nEngineering\n(30 features)" as Feat
+participant "Grade Predictor\n(Kaggle: VotingRegressor\nTop-5, R²=0.97, MAE=0.28)" as ML
+
+note over ML
+  Artifact: grade_predictor_perfect.pkl
+  antrenat pe Kaggle (prezicere-note.ipynb,
+  ~150 elevi / 8.750 încercări sintetice)
+  Fallback: AdvancedGradePredictor → formulă
+end note
+
+Student -> FE : Deschide tab-ul Analytics
+FE -> BE : GET /api/ml/predict-grade?user_id=4
+
+BE -> DB : find attempts (user_id=4)
+DB --> BE : lista încercări
+BE -> DB : find exercises\n(subiect, dificultate, temă)
+DB --> BE : detalii exerciții
+
+alt < 3 încercări
+    BE --> FE : {success: false,\n"Rezolvă minim 3 exerciții"}
+    FE --> Student : "Rezolvă mai multe\nexerciții pentru predicție"
+else 3–9 încercări sau model indisponibil
+    BE -> BE : Formula simplă:\nnota = 1 + accuracy × 9
+    BE --> FE : {predicted_grade,\nmodel_type: "formula"}
+else ≥ 10 încercări (model ML)
+    BE -> Feat : extract_features(attempts)
+    Feat -> Feat : accuracy per subiect/dificultate
+    Feat -> Feat : trend, consistență, streak
+    Feat -> Feat : timp, diversitate teme
+    Feat -> Feat : densitate, balanță subiecte
+    Feat --> BE : feature_vector[30]
+
+    BE -> ML : predict(features)
+    ML -> ML : Top-5 modele (selectate\nautomat după RMSE la CV)
+    ML -> ML : VotingRegressor\n+ ClippedRegressor [1,10]
+    ML --> BE : predicted_grade
+
+    BE -> BE : Interval de încredere\n(deviația între sub-modele),\nbreakdown pe subiecte, insights
+
+    BE --> FE : {predicted_grade, confidence_interval,\nconfidence_level, breakdown, insights,\nmodel_type: "kaggle_voting_top"}
+end
+
+FE -> FE : Animație gauge\n+ recomandări
+FE --> Student : "Nota estimată: 5.93\nConcentrează-te pe Subiectul 3"
+
+@enduml

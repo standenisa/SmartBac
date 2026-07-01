@@ -47,3 +47,24 @@ def init_db():
         [("user_id", 1), ("achievement_id", 1)], unique=True
     )
     db.exam_simulations.create_index("user_id")
+
+    # Adaptive learning
+    db.user_exercise_history.create_index(
+        [("user_id", 1), ("exercise_id", 1)], unique=True
+    )
+    db.user_exercise_history.create_index([("user_id", 1), ("next_review", 1)])
+    db.user_exercise_history.create_index([("user_id", 1), ("topic", 1)])
+
+    # Daily challenges
+    db.daily_challenge_attempts.create_index(
+        [("user_id", 1), ("date", 1)], unique=True
+    )
+
+    # Leagues
+    db.leagues.create_index([("week_start", 1), ("league", 1)])
+    db.leagues.create_index(
+        [("user_id", 1), ("week_start", 1)], unique=True
+    )
+
+    # Chat history
+    db.chat_history.create_index([("user_id", 1), ("timestamp", -1)])

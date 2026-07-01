@@ -21,7 +21,7 @@ random.seed(42)
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_PATH = os.path.join(PROJECT_ROOT, "data", "raw", "exercises_bac.json")
-OUTPUT_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "augmented_exercises.json")
+OUTPUT_PATH = os.path.join(PROJECT_ROOT, "data", "augmented", "exercises_augmented.json")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -73,16 +73,20 @@ def _frac_str(num, den):
     return f"{num}/{den}"
 
 
-def _factorial(n):
-    return math.factorial(n)
+def _nonzero(lo, hi):
+    """Random nonzero integer in [lo, hi]."""
+    return random.choice([i for i in range(lo, hi + 1) if i != 0])
 
 
-def _comb(n, k):
-    return math.comb(n, k)
+def _mat2(M):
+    """Display a 2x2 matrix as [[a, b], [c, d]]."""
+    return f"[[{M[0][0]}, {M[0][1]}], [{M[1][0]}, {M[1][1]}]]"
 
 
-def _perm(n, k):
-    return _factorial(n) // _factorial(n - k)
+def _sqrt_str(n):
+    """Return sqrt(n) as a string, exact when n is a perfect square."""
+    r = math.isqrt(n)
+    return str(r) if r * r == n else f"sqrt({n})"
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +134,7 @@ def generate_equations(count=450):
 
     # --- Linear: ax + b = c  (a != 0, integer solution) ---
     for _ in range(per_sub):
-        a = random.choice([i for i in range(-10, 11) if i != 0])
+        a = _nonzero(-10, 10)
         x_sol = random.randint(-20, 20)
         b = random.randint(-30, 30)
         c = a * x_sol + b
@@ -142,13 +146,12 @@ def generate_equations(count=450):
             f"Mutam termenul liber: {a}x = {c} - ({b}) = {c - b}",
             f"Impartim la {a}: x = {c - b}/{a} = {x_sol}",
         ]
-        latex = f"{a}x {'+' if b >= 0 else '-'} {abs(b)} = {c}"
         exercises.append({
             "question": question,
             "answer": f"x = {x_sol}",
             "type": "equation",
             "steps": steps,
-            "latex": latex,
+            "latex": eq_str,
             "difficulty": 1,
             "source": "generated",
             "profile": "BOTH",
@@ -156,7 +159,7 @@ def generate_equations(count=450):
 
     # --- Quadratic: ax^2 + bx + c = 0 with delta >= 0 ---
     for _ in range(per_sub):
-        a = random.choice([i for i in range(-5, 6) if i != 0])
+        a = _nonzero(-5, 5)
         # ensure discriminant >= 0 by constructing from roots
         x1 = random.randint(-10, 10)
         x2 = random.randint(-10, 10)
@@ -172,21 +175,24 @@ def generate_equations(count=450):
         else:
             s1, s2 = sorted([x1, x2])
             answer_str = f"x1 = {s1}, x2 = {s2}"
-        sqrt_delta = int(math.isqrt(delta)) if delta >= 0 else 0
+        sqrt_delta = math.isqrt(delta)
+        two_a = 2 * a
+        r_minus = (-b_coeff - sqrt_delta) // two_a
+        r_plus = (-b_coeff + sqrt_delta) // two_a
         steps = [
             f"Ecuatia: {eq_str}",
             f"a = {a}, b = {b_coeff}, c = {c_coeff}",
             f"Delta = b^2 - 4ac = {b_coeff}^2 - 4*{a}*{c_coeff} = {delta}",
             f"sqrt(Delta) = {sqrt_delta}",
-            f"x1 = (-b - sqrt(Delta)) / (2a) = ({-b_coeff} - {sqrt_delta}) / {2*a} = {min(x1,x2)}",
-            f"x2 = (-b + sqrt(Delta)) / (2a) = ({-b_coeff} + {sqrt_delta}) / {2*a} = {max(x1,x2)}",
+            f"x1 = (-b - sqrt(Delta)) / (2a) = ({-b_coeff} - {sqrt_delta}) / {two_a} = {r_minus}",
+            f"x2 = (-b + sqrt(Delta)) / (2a) = ({-b_coeff} + {sqrt_delta}) / {two_a} = {r_plus}",
         ]
         exercises.append({
             "question": question,
             "answer": answer_str,
             "type": "equation",
             "steps": steps,
-            "latex": f"{_poly_str([a, b_coeff, c_coeff])} = 0",
+            "latex": eq_str,
             "difficulty": 2,
             "source": "generated",
             "profile": "BOTH",
@@ -197,15 +203,15 @@ def generate_equations(count=450):
         # build from known solution
         x_sol = random.randint(-10, 10)
         y_sol = random.randint(-10, 10)
-        a1 = random.choice([i for i in range(-6, 7) if i != 0])
-        b1 = random.choice([i for i in range(-6, 7) if i != 0])
+        a1 = _nonzero(-6, 6)
+        b1 = _nonzero(-6, 6)
         c1 = a1 * x_sol + b1 * y_sol
-        a2 = random.choice([i for i in range(-6, 7) if i != 0])
-        b2 = random.choice([i for i in range(-6, 7) if i != 0])
+        a2 = _nonzero(-6, 6)
+        b2 = _nonzero(-6, 6)
         # avoid parallel lines
         while a1 * b2 == a2 * b1:
-            a2 = random.choice([i for i in range(-6, 7) if i != 0])
-            b2 = random.choice([i for i in range(-6, 7) if i != 0])
+            a2 = _nonzero(-6, 6)
+            b2 = _nonzero(-6, 6)
         c2 = a2 * x_sol + b2 * y_sol
         eq1 = f"{a1}x {_sign_str(b1)}y = {c1}"
         eq2 = f"{a2}x {_sign_str(b2)}y = {c2}"
@@ -231,7 +237,7 @@ def generate_equations(count=450):
 
     # --- Variation / absolute-value style linear ---
     for _ in range(count - 3 * per_sub):
-        a = random.choice([i for i in range(-8, 9) if i != 0])
+        a = _nonzero(-8, 8)
         b = random.randint(-15, 15)
         c = random.randint(-15, 15)
         d = random.randint(-15, 15)
@@ -279,7 +285,7 @@ def generate_functions(count=450):
 
     # --- f(x) = ax + b, calculate f(k) ---
     for _ in range(per_sub):
-        a = random.choice([i for i in range(-10, 11) if i != 0])
+        a = _nonzero(-10, 10)
         b = random.randint(-20, 20)
         k = random.randint(-10, 10)
         result = a * k + b
@@ -303,7 +309,7 @@ def generate_functions(count=450):
 
     # --- f(x) = ax^2 + bx + c, calculate f(k) ---
     for _ in range(per_sub):
-        a = random.choice([i for i in range(-5, 6) if i != 0])
+        a = _nonzero(-5, 5)
         b = random.randint(-10, 10)
         c = random.randint(-10, 10)
         k = random.randint(-5, 5)
@@ -328,7 +334,7 @@ def generate_functions(count=450):
 
     # --- Find x when f(x) = k, f linear ---
     for _ in range(per_sub):
-        a = random.choice([i for i in range(-10, 11) if i != 0])
+        a = _nonzero(-10, 10)
         b = random.randint(-20, 20)
         x_sol = random.randint(-15, 15)
         k = a * x_sol + b
@@ -390,17 +396,12 @@ def generate_derivatives(count=450):
     # --- Power rule: (x^n)' = n*x^(n-1) ---
     for _ in range(per_sub):
         n = random.randint(2, 12)
-        a = random.choice([i for i in range(-8, 9) if i != 0])
+        a = _nonzero(-8, 8)
         preamble = random.choice(DERIV_PREAMBLES)
-        f_str = f"{a}x^{n}" if abs(a) != 1 else (f"x^{n}" if a == 1 else f"-x^{n}")
+        f_str = _poly_str([a] + [0] * n)
         deriv_coeff = a * n
         deriv_exp = n - 1
-        if deriv_exp == 1:
-            deriv_str = f"{deriv_coeff}x" if abs(deriv_coeff) != 1 else ("x" if deriv_coeff == 1 else "-x")
-        else:
-            deriv_str = f"{deriv_coeff}x^{deriv_exp}" if abs(deriv_coeff) != 1 else (
-                f"x^{deriv_exp}" if deriv_coeff == 1 else f"-x^{deriv_exp}"
-            )
+        deriv_str = _poly_str([deriv_coeff] + [0] * deriv_exp)
         question = f"{preamble}{f_str}"
         steps = [
             f"f(x) = {f_str}",
@@ -421,7 +422,7 @@ def generate_derivatives(count=450):
     # --- Sum rule: polynomial derivatives ---
     for _ in range(per_sub):
         deg = random.randint(2, 4)
-        coeffs = [random.choice([i for i in range(-6, 7) if i != 0])]
+        coeffs = [_nonzero(-6, 6)]
         for _ in range(deg):
             coeffs.append(random.randint(-10, 10))
         f_str = _poly_str(coeffs)
@@ -459,9 +460,9 @@ def generate_derivatives(count=450):
 
     # --- Product rule: (uv)' = u'v + uv' with simple u,v ---
     for _ in range(per_sub):
-        a = random.choice([i for i in range(-5, 6) if i != 0])
+        a = _nonzero(-5, 5)
         b = random.randint(-8, 8)
-        c = random.choice([i for i in range(-5, 6) if i != 0])
+        c = _nonzero(-5, 5)
         d = random.randint(-8, 8)
         u_str = _poly_str([a, b])
         v_str = _poly_str([c, d])
@@ -496,7 +497,7 @@ def generate_derivatives(count=450):
 
     # --- Derivative at a point ---
     for _ in range(count - 3 * per_sub):
-        a = random.choice([i for i in range(-5, 6) if i != 0])
+        a = _nonzero(-5, 5)
         b = random.randint(-10, 10)
         c = random.randint(-10, 10)
         k = random.randint(-5, 5)
@@ -533,7 +534,7 @@ def generate_limits(count=450):
 
     # --- lim(x->a) polynomial (direct substitution) ---
     for _ in range(per_sub):
-        a_coeff = random.choice([i for i in range(-4, 5) if i != 0])
+        a_coeff = _nonzero(-4, 4)
         b_coeff = random.randint(-8, 8)
         c_coeff = random.randint(-8, 8)
         pt = random.randint(-5, 5)
@@ -562,8 +563,8 @@ def generate_limits(count=450):
         # numerator and denominator degrees
         deg_num = random.randint(1, 3)
         deg_den = random.randint(1, 3)
-        a_n = random.choice([i for i in range(-5, 6) if i != 0])
-        b_m = random.choice([i for i in range(-5, 6) if i != 0])
+        a_n = _nonzero(-5, 5)
+        b_m = _nonzero(-5, 5)
         # build display strings
         num_coeffs = [a_n] + [random.randint(-4, 4) for _ in range(deg_num)]
         den_coeffs = [b_m] + [random.randint(-4, 4) for _ in range(deg_den)]
@@ -601,8 +602,8 @@ def generate_limits(count=450):
 
     # --- lim(x->0) sin(x)/x = 1 and variations ---
     for _ in range(count - 2 * per_sub):
-        a = random.choice([i for i in range(-8, 9) if i != 0])
-        b = random.choice([i for i in range(-8, 9) if i != 0])
+        a = _nonzero(-8, 8)
+        b = _nonzero(-8, 8)
         # lim(x->0) sin(ax)/(bx) = a/b
         frac = Fraction(a, b)
         preamble = random.choice(LIMIT_PREAMBLES)
@@ -638,7 +639,7 @@ def generate_integrals(count=450):
     # --- Power rule: int x^n dx ---
     for _ in range(per_sub):
         n = random.randint(1, 8)
-        a = random.choice([i for i in range(-6, 7) if i != 0])
+        a = _nonzero(-6, 6)
         f_str = f"{a}x^{n}" if abs(a) != 1 else (f"x^{n}" if a == 1 else f"-x^{n}")
         new_exp = n + 1
         frac = Fraction(a, new_exp)
@@ -667,7 +668,7 @@ def generate_integrals(count=450):
     # --- Polynomial integral ---
     for _ in range(per_sub):
         deg = random.randint(2, 3)
-        coeffs = [random.choice([i for i in range(-5, 6) if i != 0])]
+        coeffs = [_nonzero(-5, 5)]
         for _ in range(deg):
             coeffs.append(random.randint(-8, 8))
         f_str = _poly_str(coeffs)
@@ -704,7 +705,7 @@ def generate_integrals(count=450):
 
     # --- Definite integrals ---
     for _ in range(count - 2 * per_sub):
-        a_coeff = random.choice([i for i in range(-4, 5) if i != 0])
+        a_coeff = _nonzero(-4, 4)
         b_coeff = random.randint(-6, 6)
         lo = random.randint(-3, 2)
         hi = lo + random.randint(1, 5)
@@ -717,7 +718,7 @@ def generate_integrals(count=450):
         preamble = random.choice(INTEGRAL_PREAMBLES)
         question = f"{preamble} integral de la {lo} la {hi} din ({f_str}) dx"
         frac_a = Fraction(a_coeff, 2)
-        antideriv = f"({frac_a})x^2 + ({b_coeff})x" if frac_a.denominator != 1 else f"{frac_a.numerator}x^2 + ({b_coeff})x" if frac_a.numerator != 0 else f"({b_coeff})x"
+        antideriv = f"({frac_a})x^2 + ({b_coeff})x" if frac_a.denominator != 1 else f"{frac_a.numerator}x^2 + ({b_coeff})x"
         # evaluate
         val_hi = Fraction(a_coeff, 2) * hi * hi + b_coeff * hi
         val_lo = Fraction(a_coeff, 2) * lo * lo + b_coeff * lo
@@ -754,14 +755,11 @@ def generate_matrices(count=450):
         A = [[random.randint(-10, 10) for _ in range(2)] for _ in range(2)]
         B = [[random.randint(-10, 10) for _ in range(2)] for _ in range(2)]
         C = [[A[i][j] + B[i][j] for j in range(2)] for i in range(2)]
-        question = (
-            f"Calculati A + B, unde A = [[{A[0][0]}, {A[0][1]}], [{A[1][0]}, {A[1][1]}]] "
-            f"si B = [[{B[0][0]}, {B[0][1]}], [{B[1][0]}, {B[1][1]}]]."
-        )
-        answer = f"[[{C[0][0]}, {C[0][1]}], [{C[1][0]}, {C[1][1]}]]"
+        question = f"Calculati A + B, unde A = {_mat2(A)} si B = {_mat2(B)}."
+        answer = _mat2(C)
         steps = [
-            f"A = [[{A[0][0]}, {A[0][1]}], [{A[1][0]}, {A[1][1]}]]",
-            f"B = [[{B[0][0]}, {B[0][1]}], [{B[1][0]}, {B[1][1]}]]",
+            f"A = {_mat2(A)}",
+            f"B = {_mat2(B)}",
             "Adunam element cu element:",
             f"A + B = [[{A[0][0]}+{B[0][0]}, {A[0][1]}+{B[0][1]}], [{A[1][0]}+{B[1][0]}, {A[1][1]}+{B[1][1]}]]",
             f"= {answer}",
@@ -785,14 +783,11 @@ def generate_matrices(count=450):
             [A[0][0]*B[0][0] + A[0][1]*B[1][0], A[0][0]*B[0][1] + A[0][1]*B[1][1]],
             [A[1][0]*B[0][0] + A[1][1]*B[1][0], A[1][0]*B[0][1] + A[1][1]*B[1][1]],
         ]
-        question = (
-            f"Calculati A * B, unde A = [[{A[0][0]}, {A[0][1]}], [{A[1][0]}, {A[1][1]}]] "
-            f"si B = [[{B[0][0]}, {B[0][1]}], [{B[1][0]}, {B[1][1]}]]."
-        )
-        answer = f"[[{C[0][0]}, {C[0][1]}], [{C[1][0]}, {C[1][1]}]]"
+        question = f"Calculati A * B, unde A = {_mat2(A)} si B = {_mat2(B)}."
+        answer = _mat2(C)
         steps = [
-            f"A = [[{A[0][0]}, {A[0][1]}], [{A[1][0]}, {A[1][1]}]]",
-            f"B = [[{B[0][0]}, {B[0][1]}], [{B[1][0]}, {B[1][1]}]]",
+            f"A = {_mat2(A)}",
+            f"B = {_mat2(B)}",
             f"C[0][0] = {A[0][0]}*{B[0][0]} + {A[0][1]}*{B[1][0]} = {C[0][0]}",
             f"C[0][1] = {A[0][0]}*{B[0][1]} + {A[0][1]}*{B[1][1]} = {C[0][1]}",
             f"C[1][0] = {A[1][0]}*{B[0][0]} + {A[1][1]}*{B[1][0]} = {C[1][0]}",
@@ -814,9 +809,9 @@ def generate_matrices(count=450):
     for _ in range(per_sub):
         A = [[random.randint(-10, 10) for _ in range(2)] for _ in range(2)]
         det = A[0][0] * A[1][1] - A[0][1] * A[1][0]
-        question = f"Calculati determinantul matricei A = [[{A[0][0]}, {A[0][1]}], [{A[1][0]}, {A[1][1]}]]."
+        question = f"Calculati determinantul matricei A = {_mat2(A)}."
         steps = [
-            f"A = [[{A[0][0]}, {A[0][1]}], [{A[1][0]}, {A[1][1]}]]",
+            f"A = {_mat2(A)}",
             f"det(A) = {A[0][0]}*{A[1][1]} - {A[0][1]}*{A[1][0]}",
             f"det(A) = {A[0][0] * A[1][1]} - {A[0][1] * A[1][0]} = {det}",
         ]
@@ -844,8 +839,8 @@ def generate_matrices(count=450):
             [Fraction(A[1][1], det), Fraction(-A[0][1], det)],
             [Fraction(-A[1][0], det), Fraction(A[0][0], det)],
         ]
-        inv_str = f"[[{inv_entries[0][0]}, {inv_entries[0][1]}], [{inv_entries[1][0]}, {inv_entries[1][1]}]]"
-        question = f"Gasiti inversa matricei A = [[{A[0][0]}, {A[0][1]}], [{A[1][0]}, {A[1][1]}]]."
+        inv_str = _mat2(inv_entries)
+        question = f"Gasiti inversa matricei A = {_mat2(A)}."
         steps = [
             f"det(A) = {A[0][0]}*{A[1][1]} - {A[0][1]}*{A[1][0]} = {det}",
             f"A^(-1) = (1/{det}) * [[{A[1][1]}, {-A[0][1]}], [{-A[1][0]}, {A[0][0]}]]",
@@ -890,7 +885,7 @@ def generate_vectors(count=450):
             ]
             diff = 1
         else:
-            k = random.choice([i for i in range(-5, 6) if i != 0])
+            k = _nonzero(-5, 5)
             result = [k * u[i] for i in range(dim)]
             question = f"Calculati {k} * u, unde u = {u}."
             answer = str(result)
@@ -940,10 +935,7 @@ def generate_vectors(count=450):
         dim = random.choice([2, 3])
         u = [random.randint(-8, 8) for _ in range(dim)]
         sq_sum = sum(x * x for x in u)
-        mag = math.sqrt(sq_sum)
-        mag_str = f"sqrt({sq_sum})"
-        if int(mag) ** 2 == sq_sum:
-            mag_str = str(int(mag))
+        mag_str = _sqrt_str(sq_sum)
         question = f"Calculati norma (modulul) vectorului u = {u}."
         steps = [
             f"u = {u}",
@@ -976,7 +968,7 @@ def generate_combinatorics(count=450):
     for _ in range(per_sub):
         n = random.randint(3, 15)
         k = random.randint(0, n)
-        result = _comb(n, k)
+        result = math.comb(n, k)
         question = f"Calculati C({n},{k})."
         steps = [
             f"C(n,k) = n! / (k! * (n-k)!)",
@@ -998,7 +990,7 @@ def generate_combinatorics(count=450):
     for _ in range(per_sub):
         n = random.randint(3, 12)
         k = random.randint(1, min(n, 6))
-        result = _perm(n, k)
+        result = math.perm(n, k)
         question = f"Calculati A({n},{k}) (aranjamente)."
         steps = [
             f"A(n,k) = n! / (n-k)!",
@@ -1019,7 +1011,7 @@ def generate_combinatorics(count=450):
     # --- P(n) = n! ---
     for _ in range(per_sub):
         n = random.randint(1, 10)
-        result = _factorial(n)
+        result = math.factorial(n)
         question = f"Calculati P({n}) = {n}! (permutari)."
         steps = [
             f"P(n) = n!",
@@ -1042,7 +1034,7 @@ def generate_combinatorics(count=450):
         if problem_type == "comitet":
             n = random.randint(5, 15)
             k = random.randint(2, min(n, 5))
-            result = _comb(n, k)
+            result = math.comb(n, k)
             question = f"In cate moduri se poate forma un comitet de {k} persoane din {n} candidati?"
             steps = [
                 f"Ordinea nu conteaza => combinari",
@@ -1052,7 +1044,7 @@ def generate_combinatorics(count=450):
         elif problem_type == "echipa":
             n = random.randint(5, 12)
             k = random.randint(2, min(n, 4))
-            result = _perm(n, k)
+            result = math.perm(n, k)
             question = (
                 f"In cate moduri se pot alege si aranja {k} persoane din {n} "
                 f"pentru {k} pozitii distincte?"
@@ -1137,7 +1129,7 @@ def generate_probability(count=450):
         n_coins = random.randint(2, 5)
         k_heads = random.randint(0, n_coins)
         total = 2 ** n_coins
-        favorable = _comb(n_coins, k_heads)
+        favorable = math.comb(n_coins, k_heads)
         frac = Fraction(favorable, total)
         question = (
             f"Se arunca {n_coins} monede. Care este probabilitatea "
@@ -1223,10 +1215,7 @@ def generate_geometry(count=450):
         x2, y2 = random.randint(-10, 10), random.randint(-10, 10)
         dx, dy = x2 - x1, y2 - y1
         sq = dx * dx + dy * dy
-        dist = math.sqrt(sq)
-        dist_str = f"sqrt({sq})"
-        if int(dist) ** 2 == sq:
-            dist_str = str(int(dist))
+        dist_str = _sqrt_str(sq)
         question = f"Calculati distanta dintre punctele A({x1}, {y1}) si B({x2}, {y2})."
         steps = [
             f"d = sqrt((x2-x1)^2 + (y2-y1)^2)",
@@ -1368,7 +1357,7 @@ def generate_sequences(count=450):
     # --- Arithmetic: find a_n ---
     for _ in range(per_sub):
         a1 = random.randint(-10, 20)
-        d = random.choice([i for i in range(-8, 9) if i != 0])
+        d = _nonzero(-8, 8)
         n = random.randint(2, 30)
         a_n = a1 + (n - 1) * d
         question = (
@@ -1393,10 +1382,10 @@ def generate_sequences(count=450):
     # --- Arithmetic: find S_n ---
     for _ in range(per_sub):
         a1 = random.randint(-5, 15)
-        d = random.choice([i for i in range(-5, 6) if i != 0])
+        d = _nonzero(-5, 5)
         n = random.randint(3, 20)
         a_n = a1 + (n - 1) * d
-        s_n = n * (a1 + a_n) // 2 if (n * (a1 + a_n)) % 2 == 0 else Fraction(n * (a1 + a_n), 2)
+        s_n = n * (a1 + a_n) // 2
         question = (
             f"Intr-o progresie aritmetica, a1 = {a1} si ratia d = {d}. "
             f"Calculati S_{n} (suma primilor {n} termeni)."
@@ -1419,7 +1408,7 @@ def generate_sequences(count=450):
 
     # --- Geometric: find a_n ---
     for _ in range(per_sub):
-        a1 = random.choice([i for i in range(-8, 9) if i != 0])
+        a1 = _nonzero(-8, 8)
         r = random.choice([2, 3, -2, -3, Fraction(1, 2), Fraction(1, 3)])
         n = random.randint(2, 8)
         a_n = a1 * r ** (n - 1)
@@ -1444,13 +1433,10 @@ def generate_sequences(count=450):
 
     # --- Geometric: find S_n ---
     for _ in range(count - 3 * per_sub):
-        a1 = random.choice([i for i in range(-5, 6) if i != 0])
+        a1 = _nonzero(-5, 5)
         r = random.choice([2, 3, -2])
         n = random.randint(3, 7)
-        if r == 1:
-            s_n = a1 * n
-        else:
-            s_n = a1 * (r ** n - 1) // (r - 1) if (a1 * (r ** n - 1)) % (r - 1) == 0 else Fraction(a1 * (r ** n - 1), r - 1)
+        s_n = a1 * (r ** n - 1) // (r - 1)
         question = (
             f"Intr-o progresie geometrica, a1 = {a1} si ratia q = {r}. "
             f"Calculati S_{n} (suma primilor {n} termeni)."
@@ -1546,6 +1532,21 @@ def main():
     for t, c in sorted(stats.items()):
         print(f"  {t:15s} : {c:5d}")
     print(f"\nSaved to {OUTPUT_PATH}")
+
+    # ── 3 exemple de augmentări ──
+    generated_only = [e for e in all_exercises if e.get("source") == "generated"]
+    if generated_only:
+        print(f"\n{'='*50}")
+        print("3 exemple de augmentări:\n")
+        rng = random.Random(99)
+        samples = rng.sample(generated_only, min(3, len(generated_only)))
+        for i, ex in enumerate(samples, 1):
+            print(f"  Exemplu {i} [{ex['type']}]:")
+            print(f"    Q: {ex['question']}")
+            print(f"    A: {ex['answer']}")
+            if ex.get("steps"):
+                print(f"    Steps: {ex['steps'][0]}")
+            print()
 
 
 if __name__ == "__main__":

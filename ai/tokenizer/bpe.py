@@ -5,7 +5,7 @@ with special support for mathematical notation and LaTeX commands.
 
 import json
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 
 
 class MathBPETokenizer:
@@ -17,9 +17,6 @@ class MathBPETokenizer:
     natural-language words.
     """
 
-    # ------------------------------------------------------------------
-    # Special tokens
-    # ------------------------------------------------------------------
     SPECIAL_TOKENS = {
         "<PAD>": 0,
         "<UNK>": 1,
@@ -28,9 +25,6 @@ class MathBPETokenizer:
         "<SEP>": 4,
     }
 
-    # ------------------------------------------------------------------
-    # Pre-defined LaTeX tokens (never split)
-    # ------------------------------------------------------------------
     LATEX_TOKENS = [
         r"\frac", r"\int", r"\lim", r"\sqrt", r"\sum", r"\prod",
         r"\infty", r"\pi", r"\alpha", r"\beta", r"\gamma", r"\delta",
@@ -45,17 +39,13 @@ class MathBPETokenizer:
         r"\arcsin", r"\arccos", r"\arctan",
     ]
 
-    # ------------------------------------------------------------------
-    # Math operator tokens
-    # ------------------------------------------------------------------
     MATH_OPERATORS = [
         "+", "-", "*", "/", "=", "<", ">",
         "(", ")", "[", "]", "{", "}", "^", "_", "|",
     ]
 
-    # ------------------------------------------------------------------
-    # Regex used by pre_tokenize  (compiled once at class level)
-    # ------------------------------------------------------------------
+    _PROTECTED = frozenset(SPECIAL_TOKENS) | frozenset(LATEX_TOKENS) | frozenset(MATH_OPERATORS)
+
     # Order matters:
     #   1. LaTeX commands with braces  e.g. \mathbb{R}
     #   2. LaTeX commands              e.g. \frac
@@ -63,6 +53,12 @@ class MathBPETokenizer:
     #   4. Words                       e.g. hello
     #   5. Operators / single chars    e.g. +
     #   6. Whitespace runs
+    #
+    # Branch 1 also swallows things like \frac{1}{2} as "\frac{1}" instead of
+    # splitting the fraction into parts. A better pattern would protect only
+    # \mathbb{...} (r"(\\mathbb\{[^}]*\})"), but the shipped math_bpe.json and
+    # the transformer checkpoints were trained with THIS pattern, so changing
+    # it requires retraining both (train_tokenizer.py, then transformer/train.py).
     _PRE_TOKENIZE_RE = re.compile(
         r"(\\[a-zA-Z]+\{[^}]*\})"   # \command{...}
         r"|(\\[a-zA-Z]+)"            # \command
@@ -73,9 +69,6 @@ class MathBPETokenizer:
         r"|(.)"                      # any other single character
     )
 
-    # ================================================================
-    # Construction
-    # ================================================================
     def __init__(self, vocab_size: int = 8192) -> None:
         self.target_vocab_size = vocab_size
 
@@ -84,25 +77,14 @@ class MathBPETokenizer:
         self.inverse_vocab: dict[int, str] = {}  # id -> token
         self.merges: list[tuple[str, str]] = []   # ordered merge rules
 
-    # ================================================================
-    # Pre-tokenisation
-    # ================================================================
     def pre_tokenize(self, text: str) -> list[str]:
         """Split *text* into a list of preliminary tokens.
 
         LaTeX commands, numbers, words, operators, and whitespace are each
         kept as individual tokens.  The output list contains no empty strings.
         """
-        tokens: list[str] = []
-        for match in self._PRE_TOKENIZE_RE.finditer(text):
-            token = match.group()
-            if token:
-                tokens.append(token)
-        return tokens
+        return [m.group() for m in self._PRE_TOKENIZE_RE.finditer(text)]
 
-    # ================================================================
-    # Training
-    # ================================================================
     def train(self, texts: list[str], verbose: bool = True) -> None:
         """Train the BPE tokenizer on a corpus of *texts*.
 
@@ -117,7 +99,6 @@ class MathBPETokenizer:
            and add the merged token to the vocabulary until the target
            vocabulary size is reached.
         """
-        # -- 1. Pre-tokenize ------------------------------------------------
         if verbose:
             print("[BPE] Pre-tokenizing corpus ...")
 
@@ -125,22 +106,15 @@ class MathBPETokenizer:
         for text in texts:
             all_pre_tokens.extend(self.pre_tokenize(text))
 
-        # -- 2. Determine which pre-tokens are "protected" ------------------
-        protected: set[str] = set(self.SPECIAL_TOKENS.keys())
-        protected.update(self.LATEX_TOKENS)
-        protected.update(self.MATH_OPERATORS)
-
-        # -- 3. Build word frequency list ------------------------------------
-        #    Each word is stored as a *tuple* of its constituent symbols.
-        #    Protected tokens stay as single-element tuples.
+        # Each word is stored as a *tuple* of its constituent symbols.
+        # Protected tokens stay as single-element tuples.
         word_freq: Counter[tuple[str, ...]] = Counter()
         for pt in all_pre_tokens:
-            if pt in protected:
+            if pt in self._PROTECTED:
                 word_freq[(pt,)] += 1
             else:
                 word_freq[tuple(pt)] += 1
 
-        # -- 4. Build initial vocab ------------------------------------------
         self.vocab = {}
         idx = 0
         # Special tokens first
@@ -174,7 +148,6 @@ class MathBPETokenizer:
             print(f"[BPE] Initial vocab size: {len(self.vocab)}")
             print(f"[BPE] Target vocab size : {self.target_vocab_size}")
 
-        # -- 5. Iterative BPE merges ----------------------------------------
         self.merges = []
         num_merges = self.target_vocab_size - len(self.vocab)
         if num_merges <= 0:
@@ -182,7 +155,6 @@ class MathBPETokenizer:
                 print("[BPE] Vocab already at target size; no merges needed.")
         else:
             for i in range(num_merges):
-                # Count adjacent pairs
                 pair_counts: Counter[tuple[str, str]] = Counter()
                 for word_tuple, freq in word_freq.items():
                     if len(word_tuple) < 2:
@@ -198,16 +170,16 @@ class MathBPETokenizer:
                 best_pair = pair_counts.most_common(1)[0][0]
                 merged_token = best_pair[0] + best_pair[1]
 
-                # Record the merge
                 self.merges.append(best_pair)
                 if merged_token not in self.vocab:
                     self.vocab[merged_token] = idx
                     idx += 1
 
-                # Apply the merge to every word in the frequency table
                 new_word_freq: Counter[tuple[str, ...]] = Counter()
                 for word_tuple, freq in word_freq.items():
-                    new_word = self._apply_merge(word_tuple, best_pair)
+                    new_word = tuple(
+                        self._apply_merge_list(list(word_tuple), best_pair[0], best_pair[1])
+                    )
                     new_word_freq[new_word] += freq
                 word_freq = new_word_freq
 
@@ -217,26 +189,18 @@ class MathBPETokenizer:
                         f"'{best_pair[0]}' + '{best_pair[1]}' -> '{merged_token}'"
                     )
 
-        # -- 6. Build inverse vocab ------------------------------------------
         self.inverse_vocab = {v: k for k, v in self.vocab.items()}
 
         if verbose:
             print(f"[BPE] Training complete. Final vocab size: {len(self.vocab)}")
 
-    # ================================================================
-    # Encoding
-    # ================================================================
     def encode(self, text: str) -> list[int]:
         """Encode *text* into a list of integer token IDs."""
         pre_tokens = self.pre_tokenize(text)
 
-        protected: set[str] = set(self.SPECIAL_TOKENS.keys())
-        protected.update(self.LATEX_TOKENS)
-        protected.update(self.MATH_OPERATORS)
-
         ids: list[int] = []
         for pt in pre_tokens:
-            if pt in protected:
+            if pt in self._PROTECTED:
                 ids.append(self.vocab.get(pt, self.SPECIAL_TOKENS["<UNK>"]))
             else:
                 # Split into characters, then apply merges in order
@@ -247,20 +211,23 @@ class MathBPETokenizer:
                     ids.append(self.vocab.get(sym, self.SPECIAL_TOKENS["<UNK>"]))
         return ids
 
-    # ================================================================
-    # Decoding
-    # ================================================================
-    def decode(self, ids: list[int]) -> str:
-        """Decode a list of integer token IDs back into a string."""
+    def decode(self, ids: list[int], strip_special: bool = True) -> str:
+        """Decode a list of integer token IDs back into a string.
+
+        Args:
+            ids: List of token IDs to decode.
+            strip_special: If True, remove special tokens from output.
+        """
+        special_ids = set(self.SPECIAL_TOKENS.values()) if strip_special else set()
         tokens: list[str] = []
         for tid in ids:
-            tok = self.inverse_vocab.get(tid, "<UNK>")
+            if tid in special_ids:
+                continue
+            tok = self.inverse_vocab.get(tid, "")
             tokens.append(tok)
-        return "".join(tokens)
+        text = "".join(tokens)
+        return text.strip()
 
-    # ================================================================
-    # Save / Load
-    # ================================================================
     def save(self, path: str) -> None:
         """Persist vocabulary and merge rules to a JSON file."""
         data = {
@@ -278,35 +245,9 @@ class MathBPETokenizer:
         self.merges = [tuple(pair) for pair in data["merges"]]
         self.inverse_vocab = {v: k for k, v in self.vocab.items()}
 
-    # ================================================================
-    # Dunder helpers
-    # ================================================================
     def __len__(self) -> int:
         """Return the current vocabulary size."""
         return len(self.vocab)
-
-    # ================================================================
-    # Private helpers
-    # ================================================================
-    @staticmethod
-    def _apply_merge(
-        word: tuple[str, ...], pair: tuple[str, str]
-    ) -> tuple[str, ...]:
-        """Return a new word-tuple with every occurrence of *pair* merged."""
-        new_word: list[str] = []
-        i = 0
-        while i < len(word):
-            if (
-                i < len(word) - 1
-                and word[i] == pair[0]
-                and word[i + 1] == pair[1]
-            ):
-                new_word.append(pair[0] + pair[1])
-                i += 2
-            else:
-                new_word.append(word[i])
-                i += 1
-        return tuple(new_word)
 
     @staticmethod
     def _apply_merge_list(

@@ -23,7 +23,8 @@ from ai.tokenizer.bpe import MathBPETokenizer
 # ---------------------------------------------------------------------------
 # Paths (relative to project root)
 # ---------------------------------------------------------------------------
-AUGMENTED_DATA_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "augmented_exercises.json")
+MERGED_DATA_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "exercises_merged.json")
+AUGMENTED_DATA_PATH = os.path.join(PROJECT_ROOT, "data", "augmented", "exercises_augmented.json")
 RAW_DATA_PATH = os.path.join(PROJECT_ROOT, "data", "raw", "exercises_bac.json")
 TOKENIZER_SAVE_PATH = os.path.join(PROJECT_ROOT, "ai", "tokenizer", "math_bpe.json")
 
@@ -33,18 +34,24 @@ TOKENIZER_SAVE_PATH = os.path.join(PROJECT_ROOT, "ai", "tokenizer", "math_bpe.js
 # ===================================================================
 
 def load_data() -> list[dict]:
-    """Load exercise data, falling back from augmented to raw."""
+    """Load exercise data, preferring merged > augmented > raw."""
+    if os.path.isfile(MERGED_DATA_PATH):
+        print(f"[DATA] Loading merged data from {MERGED_DATA_PATH}")
+        with open(MERGED_DATA_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+
     if os.path.isfile(AUGMENTED_DATA_PATH):
         print(f"[DATA] Loading augmented data from {AUGMENTED_DATA_PATH}")
         with open(AUGMENTED_DATA_PATH, "r", encoding="utf-8") as fh:
             return json.load(fh)
 
     if os.path.isfile(RAW_DATA_PATH):
-        print(f"[DATA] Augmented data not found. Falling back to {RAW_DATA_PATH}")
+        print(f"[DATA] Falling back to {RAW_DATA_PATH}")
         with open(RAW_DATA_PATH, "r", encoding="utf-8") as fh:
             return json.load(fh)
 
     print("[DATA] ERROR: No data files found. Looked in:")
+    print(f"       - {MERGED_DATA_PATH}")
     print(f"       - {AUGMENTED_DATA_PATH}")
     print(f"       - {RAW_DATA_PATH}")
     sys.exit(1)
@@ -78,16 +85,10 @@ def print_vocab_stats(tokenizer: MathBPETokenizer) -> None:
     """Print informative statistics about the trained vocabulary."""
     total = len(tokenizer)
 
-    # Count LaTeX tokens present in the vocabulary
     latex_in_vocab = [t for t in tokenizer.LATEX_TOKENS if t in tokenizer.vocab]
-
-    # Count operator tokens present
     ops_in_vocab = [t for t in tokenizer.MATH_OPERATORS if t in tokenizer.vocab]
-
-    # Count special tokens
     specials_in_vocab = [t for t in tokenizer.SPECIAL_TOKENS if t in tokenizer.vocab]
 
-    # Merge-created tokens (everything else)
     reserved = (
         set(tokenizer.SPECIAL_TOKENS.keys())
         | set(tokenizer.LATEX_TOKENS)
@@ -143,33 +144,26 @@ def main() -> None:
     print("  Math BPE Tokenizer -- Training Script")
     print("=" * 60)
 
-    # 1. Load data -----------------------------------------------------------
     data = load_data()
     texts = extract_texts(data)
     print(f"[DATA] Extracted {len(texts)} text fragments from the dataset.")
 
-    # 2. Create tokenizer ----------------------------------------------------
     tokenizer = MathBPETokenizer(vocab_size=8192)
 
-    # 3. Train ---------------------------------------------------------------
     t0 = time.time()
     tokenizer.train(texts, verbose=True)
     elapsed = time.time() - t0
     print(f"[BPE] Training took {elapsed:.2f}s")
 
-    # 4. Save ----------------------------------------------------------------
     os.makedirs(os.path.dirname(TOKENIZER_SAVE_PATH), exist_ok=True)
     tokenizer.save(TOKENIZER_SAVE_PATH)
     print(f"[BPE] Tokenizer saved to {TOKENIZER_SAVE_PATH}")
 
-    # 5. Test ----------------------------------------------------------------
     test_encode_decode(tokenizer)
 
-    # 6. Stats ---------------------------------------------------------------
     print_vocab_stats(tokenizer)
 
-    # 7. Quick coverage estimate ---------------------------------------------
-    #    Encode the entire corpus and count <UNK> tokens.
+    # Coverage estimate: encode the entire corpus and count <UNK> tokens.
     total_tokens = 0
     unk_tokens = 0
     unk_id = tokenizer.SPECIAL_TOKENS["<UNK>"]

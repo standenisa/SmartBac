@@ -19,6 +19,7 @@ from ai.finetune.lora_config import LoRAConfig, InstructionTemplate
 try:
     import mlx.core as mx
     import mlx.nn as nn
+    from mlx.utils import tree_unflatten
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
@@ -103,12 +104,12 @@ def load_model(
                     parts = name.split(".")
                     parent = model
                     for p in parts[:-1]:
-                        parent = getattr(parent, p)
+                        parent = parent[int(p)] if p.isdigit() else getattr(parent, p)
                     setattr(parent, parts[-1], lora_layer)
 
-            # Load adapter weights
+            # Load adapter weights (saved flat, with dotted keys)
             adapter_weights = mx.load(str(adapter_file))
-            model.update(adapter_weights)
+            model.update(tree_unflatten(list(adapter_weights.items())))
             mx.eval(model.parameters())
             print(f"[inference] LoRA adapters loaded ({len(adapter_weights)} tensors)")
         else:

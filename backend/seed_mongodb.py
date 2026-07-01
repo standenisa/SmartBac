@@ -156,9 +156,6 @@ def merge_exercise_sources():
 def seed():
     print("=== Seeding MongoDB ===\n")
 
-    # Create indexes
-    init_db()
-
     # ── Clear existing data ──
     db.exercises.drop()
     db.achievements.drop()

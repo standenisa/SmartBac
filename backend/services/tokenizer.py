@@ -33,28 +33,21 @@ def _get_tokenizer() -> MathBPETokenizer | None:
     return _tokenizer
 
 
-def tokenize(text: str) -> list[str]:
-    """Pre-tokenize text into string tokens."""
+def _require_tokenizer() -> MathBPETokenizer:
     tok = _get_tokenizer()
     if tok is None:
         raise RuntimeError("Tokenizer not trained yet. Run ai/tokenizer/train_tokenizer.py first.")
-    return tok.pre_tokenize(text)
+    return tok
 
 
 def encode(text: str) -> list[int]:
     """Encode text to token IDs."""
-    tok = _get_tokenizer()
-    if tok is None:
-        raise RuntimeError("Tokenizer not trained yet. Run ai/tokenizer/train_tokenizer.py first.")
-    return tok.encode(text)
+    return _require_tokenizer().encode(text)
 
 
 def decode(ids: list[int]) -> str:
     """Decode token IDs back to text."""
-    tok = _get_tokenizer()
-    if tok is None:
-        raise RuntimeError("Tokenizer not trained yet. Run ai/tokenizer/train_tokenizer.py first.")
-    return tok.decode(ids)
+    return _require_tokenizer().decode(ids)
 
 
 def get_vocab_info() -> dict:

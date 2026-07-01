@@ -1,0 +1,44 @@
+@startuml Secventa Rezolvare Exercitiu
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 13
+
+
+actor "Elev" as User
+participant "Frontend\n(React Native)" as FE
+participant "FastAPI\nBackend" as API
+database "MongoDB" as DB
+participant "Gamificație\nService" as Gamif
+participant "Adaptive\nLearning" as Adapt
+
+User -> FE : Selectează Subiect (I/II/III)
+FE -> API : GET /api/exercises?subject=1
+API -> DB : find({subject: 1})
+DB --> API : lista exerciții
+API --> FE : JSON exerciții
+FE --> User : Afișează exercițiu
+
+User -> FE : Trimite răspuns
+FE -> API : POST /api/exercises/submit\n{exercise_id, answer, time_spent}
+API -> API : _answers_match()\nnormalizare răspuns
+API -> DB : insert attempt
+API -> Gamif : award_xp(user_id, xp)
+
+alt Răspuns Corect
+    Gamif -> DB : update user XP (+10)
+    Gamif -> Gamif : check_achievements()
+    Gamif -> DB : check level_up
+    Gamif --> API : {xp_earned, level_up, achievements}
+    API --> FE : {correct: true, xp: 10}
+    FE --> User : "Corect! 🎉 +10 XP"
+else Răspuns Greșit
+    API -> Adapt : log_weak_topic(user_id, topic)
+    Adapt -> DB : update topic stats
+    API --> FE : {correct: false, solution: "..."}
+    FE --> User : Afișează soluția pas cu pas
+end
+
+API -> Adapt : update_recommendations()
+Adapt -> DB : recalculare priorități topicuri
+
+@enduml

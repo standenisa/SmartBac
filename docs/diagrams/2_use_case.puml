@@ -1,0 +1,64 @@
+@startuml Use Case SmartBAC
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 13
+
+
+left to right direction
+
+actor "Elev" as Student
+actor "Sistem AI" as AI
+
+rectangle "SmartBAC" {
+    usecase "Autentificare\n(Login/Register)" as UC1
+    usecase "Rezolvare exerciții\npe subiecte (I, II, III)" as UC2
+    usecase "Vizualizare\nteorie matematică" as UC3
+    usecase "Chat cu tutorul AI" as UC4
+    usecase "Scanare exercițiu\ndin poză (OCR)" as UC5
+    usecase "Predicție notă BAC" as UC6
+    usecase "Vizualizare statistici\nși progres" as UC7
+    usecase "Flashcards cu\nrepetare spațiată" as UC8
+    usecase "Daily Challenge" as UC9
+    usecase "Participare în\nligi competitive" as UC10
+    usecase "Plan de studiu\npersonalizat" as UC11
+    usecase "Sesiune Pomodoro" as UC12
+    usecase "Vizualizare\nachievements" as UC13
+    usecase "Quick Practice\n(exerciții rapide)" as UC14
+
+    usecase "Rezolvare automată\nexercițiu" as AI1
+    usecase "Generare explicații\npas cu pas" as AI2
+    usecase "Detectare puncte\nslabe" as AI3
+    usecase "Recomandare\nexerciții adaptivă" as AI4
+    usecase "Calculare predicție\nnotă ensemble ML" as AI5
+}
+
+Student --> UC1
+Student --> UC2
+Student --> UC3
+Student --> UC4
+Student --> UC5
+Student --> UC6
+Student --> UC7
+Student --> UC8
+Student --> UC9
+Student --> UC10
+Student --> UC11
+Student --> UC12
+Student --> UC13
+Student --> UC14
+
+AI --> AI1
+AI --> AI2
+AI --> AI3
+AI --> AI4
+AI --> AI5
+
+UC4 ..> AI1 : <<include>>
+UC4 ..> AI2 : <<include>>
+UC5 ..> AI1 : <<include>>
+UC6 ..> AI5 : <<include>>
+UC11 ..> AI3 : <<include>>
+UC11 ..> AI4 : <<include>>
+UC2 ..> AI3 : <<include>>
+
+@enduml

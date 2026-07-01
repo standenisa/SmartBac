@@ -3,7 +3,6 @@ Fine-tune Qwen2.5-Math with LoRA using MLX
 Optimized for Apple Silicon (M4)
 """
 import json
-import os
 import sys
 import time
 import math
@@ -24,16 +23,14 @@ try:
     import mlx.core as mx
     import mlx.nn as nn
     import mlx.optimizers as optim
+    from mlx.utils import tree_flatten, tree_map
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
 
 try:
-    import mlx_lm
     from mlx_lm import load as mlx_load
     from mlx_lm.tuner.lora import LoRALinear
-    from mlx_lm.tuner.trainer import TrainingArgs, train as mlx_train
-    from mlx_lm.tuner.datasets import Dataset as MLXDataset
     MLX_LM_AVAILABLE = True
 except ImportError:
     MLX_LM_AVAILABLE = False
@@ -43,15 +40,49 @@ except ImportError:
 # Dataset preparation
 # ============================================================================
 
+def _load_jsonl(path: Path) -> list[str]:
+    samples = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                samples.append(json.loads(line)["text"])
+    return samples
+
+
 def prepare_dataset(config: LoRAConfig) -> dict:
-    """Load exercises from JSON, convert to instruction format, split and save.
+    """Load exercises, convert to instruction format, split and save.
+
+    Dacă există split-uri pre-generate (data/splits/finetune/*.jsonl),
+    le folosește direct. Altfel, încarcă JSON-ul complet și face split intern.
 
     Returns a dict with keys ``train``, ``val``, ``test`` each holding a list
     of formatted text strings ready for tokenisation.
     """
+    project_root = Path(__file__).resolve().parent.parent.parent
+
+    # ── Verificăm dacă există split-uri pre-generate ──
+    splits_dir = Path(config.splits_dir)
+    if not splits_dir.is_absolute():
+        splits_dir = project_root / splits_dir
+
+    presplit_train = splits_dir / "train.jsonl"
+    if presplit_train.exists():
+        print(f"[data] Folosesc split-uri pre-generate din {splits_dir}")
+        splits = {}
+        for split_name in ["train", "val", "test"]:
+            jsonl_path = splits_dir / f"{split_name}.jsonl"
+            samples = _load_jsonl(jsonl_path) if jsonl_path.exists() else []
+            splits[split_name] = samples
+            print(f"[data] {split_name}: {len(samples)} samples (pre-split)")
+        total = sum(len(v) for v in splits.values())
+        print(f"[data] Total: {total} samples")
+        return splits
+
+    # ── Fallback: încarcă JSON-ul complet și face split intern ──
     data_path = Path(config.data_path)
     if not data_path.is_absolute():
-        data_path = Path(__file__).resolve().parent.parent.parent / data_path
+        data_path = project_root / data_path
 
     print(f"[data] Loading exercises from {data_path} ...")
     if not data_path.exists():
@@ -90,7 +121,7 @@ def prepare_dataset(config: LoRAConfig) -> dict:
     # Persist as JSONL for reproducibility / use by mlx-lm tooling
     out_dir = Path(config.output_dir)
     if not out_dir.is_absolute():
-        out_dir = Path(__file__).resolve().parent.parent.parent / out_dir
+        out_dir = project_root / out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for split_name, samples in splits.items():
@@ -172,25 +203,18 @@ def setup_model(config: LoRAConfig):
     model, tokenizer = mlx_load(config.model_name)
 
     # ----- apply LoRA adapters -----
+    # Freeze the base model first; the LoRA layers created below add fresh
+    # (trainable) lora_a / lora_b parameters on top of the frozen weights.
+    model.freeze()
+
     lora_layers = 0
-    total_params = 0
-    trainable_params = 0
 
-    def _apply_lora(module, prefix=""):
-        nonlocal lora_layers, total_params, trainable_params
+    def _apply_lora(module):
+        nonlocal lora_layers
         for name, child in module.named_modules():
-            full_name = f"{prefix}.{name}" if prefix else name
-            # Count parameters
-            if hasattr(child, "parameters"):
-                for p in child.parameters().values():
-                    if isinstance(p, mx.array):
-                        total_params += p.size
-
             # Replace matching linear layers with LoRA variants
             short = name.split(".")[-1]
             if short in config.target_modules and isinstance(child, nn.Linear):
-                in_features = child.weight.shape[1]
-                out_features = child.weight.shape[0]
                 lora_layer = LoRALinear.from_linear(
                     child,
                     r=config.lora_rank,
@@ -201,43 +225,20 @@ def setup_model(config: LoRAConfig):
                 parts = name.split(".")
                 parent = module
                 for p in parts[:-1]:
-                    parent = getattr(parent, p)
+                    parent = parent[int(p)] if p.isdigit() else getattr(parent, p)
                 setattr(parent, parts[-1], lora_layer)
                 lora_layers += 1
 
     _apply_lora(model)
 
-    # Recount after patching
-    total_params = 0
-    trainable_params = 0
-    for k, v in model.parameters().items():
-        if isinstance(v, mx.array):
-            total_params += v.size
-            if "lora" in k.lower():
-                trainable_params += v.size
-        elif isinstance(v, dict):
-            for sub_v in v.values():
-                if isinstance(sub_v, mx.array):
-                    total_params += sub_v.size
-                    if "lora" in k.lower():
-                        trainable_params += sub_v.size
+    total_params = sum(v.size for _, v in tree_flatten(model.parameters()))
+    trainable_params = sum(v.size for _, v in tree_flatten(model.trainable_parameters()))
 
     print(f"[model] LoRA adapters applied to {lora_layers} layers")
     print(f"[model] Total parameters:     {total_params:,}")
     print(f"[model] Trainable parameters:  {trainable_params:,}")
     if total_params > 0:
         print(f"[model] Trainable ratio:       {trainable_params / total_params:.4%}")
-
-    # Freeze everything except LoRA parameters
-    model.freeze()
-    for k, v in model.parameters().items():
-        if "lora" in k.lower():
-            # Unfreeze LoRA weights
-            parts = k.split(".")
-            parent = model
-            for p in parts[:-1]:
-                parent = getattr(parent, p)
-            # LoRA layers are already unfrozen by LoRALinear
 
     return model, tokenizer
 
@@ -274,21 +275,23 @@ def train(config: LoRAConfig):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- load data -------------------------------------------------------
-    train_jsonl = out_dir / "train.jsonl"
-    val_jsonl = out_dir / "val.jsonl"
+    # Prefer pre-generated splits, fallback to output_dir
+    project_root = Path(__file__).resolve().parent.parent.parent
+    splits_dir = Path(config.splits_dir)
+    if not splits_dir.is_absolute():
+        splits_dir = project_root / splits_dir
+
+    if (splits_dir / "train.jsonl").exists():
+        train_jsonl = splits_dir / "train.jsonl"
+        val_jsonl = splits_dir / "val.jsonl"
+        print(f"[train] Using pre-split data from {splits_dir}")
+    else:
+        train_jsonl = out_dir / "train.jsonl"
+        val_jsonl = out_dir / "val.jsonl"
 
     if not train_jsonl.exists():
         print("[train] Training JSONL not found. Running prepare_dataset first ...")
         prepare_dataset(config)
-
-    def _load_jsonl(path: Path) -> list[str]:
-        samples = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    samples.append(json.loads(line)["text"])
-        return samples
 
     train_texts = _load_jsonl(train_jsonl)
     val_texts = _load_jsonl(val_jsonl) if val_jsonl.exists() else []
@@ -354,6 +357,7 @@ def train(config: LoRAConfig):
         epoch_loss = 0.0
         epoch_steps = 0
         accum_loss = mx.array(0.0)
+        accum_grads = None
         accum_count = 0
 
         for i in range(0, len(indices), config.batch_size):
@@ -369,12 +373,18 @@ def train(config: LoRAConfig):
 
             loss, grads = loss_and_grad(model, batch)
             accum_loss = accum_loss + loss
+            accum_grads = grads if accum_grads is None else tree_map(
+                lambda a, b: a + b, accum_grads, grads
+            )
             accum_count += 1
 
-            if accum_count >= config.gradient_accumulation_steps:
+            # Update on a full accumulation window, or flush the leftover
+            # micro-batches at the end of the epoch.
+            is_last_batch = i + config.batch_size >= len(indices)
+            if accum_count >= config.gradient_accumulation_steps or is_last_batch:
                 # Average accumulated gradients
                 scale = 1.0 / accum_count
-                grads = mx.tree_map(lambda g: g * scale, grads)
+                grads = tree_map(lambda g: g * scale, accum_grads)
                 optimizer.update(model, grads)
                 mx.eval(model.parameters(), optimizer.state)
 
@@ -384,6 +394,7 @@ def train(config: LoRAConfig):
                 global_step += 1
 
                 accum_loss = mx.array(0.0)
+                accum_grads = None
                 accum_count = 0
 
                 # Log every 10 steps
@@ -405,14 +416,14 @@ def train(config: LoRAConfig):
                     # Save checkpoint
                     ckpt_path = out_dir / f"checkpoint-{global_step}"
                     ckpt_path.mkdir(parents=True, exist_ok=True)
-                    _save_adapter(model, ckpt_path)
+                    _save_adapter(model, ckpt_path, config)
                     print(f"  >> Checkpoint saved to {ckpt_path}")
 
                     if val_loss is not None and val_loss < best_val_loss:
                         best_val_loss = val_loss
                         best_path = out_dir / "best_adapter"
                         best_path.mkdir(parents=True, exist_ok=True)
-                        _save_adapter(model, best_path)
+                        _save_adapter(model, best_path, config)
                         print(f"  >> Best model updated (val_loss={best_val_loss:.4f})")
 
         avg_epoch_loss = epoch_loss / max(epoch_steps, 1)
@@ -421,7 +432,7 @@ def train(config: LoRAConfig):
     # ---- final save ------------------------------------------------------
     final_path = out_dir / "final_adapter"
     final_path.mkdir(parents=True, exist_ok=True)
-    _save_adapter(model, final_path)
+    _save_adapter(model, final_path, config)
 
     elapsed = time.time() - start_time
     print(f"\n{'='*60}")
@@ -454,25 +465,16 @@ def _evaluate(model, val_tokens: list, config: LoRAConfig) -> float:
 # Adapter save / load
 # ============================================================================
 
-def _save_adapter(model, path: Path):
+def _save_adapter(model, path: Path, config: LoRAConfig):
     """Save only the LoRA adapter weights to *path*."""
-    adapter_weights = {}
-    for k, v in model.parameters().items():
-        if isinstance(v, mx.array) and "lora" in k.lower():
-            adapter_weights[k] = v
-        elif isinstance(v, dict):
-            for sub_k, sub_v in v.items():
-                full_key = f"{k}.{sub_k}"
-                if "lora" in full_key.lower() and isinstance(sub_v, mx.array):
-                    adapter_weights[full_key] = sub_v
-
+    adapter_weights = dict(tree_flatten(model.trainable_parameters()))
     mx.save_safetensors(str(path / "adapters.safetensors"), adapter_weights)
 
     # Also persist the config so we know which base model to load later
     meta = {
-        "model_name": LoRAConfig.model_name,
-        "lora_rank": LoRAConfig.lora_rank,
-        "lora_alpha": LoRAConfig.lora_alpha,
+        "model_name": config.model_name,
+        "lora_rank": config.lora_rank,
+        "lora_alpha": config.lora_alpha,
     }
     with open(path / "adapter_config.json", "w") as f:
         json.dump(meta, f, indent=2)
@@ -554,7 +556,7 @@ def main():
     print("=" * 60 + "\n")
 
     # Step 1 -- prepare data
-    splits = prepare_dataset(config)
+    prepare_dataset(config)
 
     if args.prepare_only:
         print("[main] --prepare-only flag set. Exiting after dataset preparation.")

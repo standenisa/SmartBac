@@ -1,0 +1,58 @@
+@startuml Flux Date SmartBAC
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 12
+skinparam usecaseBackgroundColor #E8F5E9
+skinparam databaseBackgroundColor #FFF3E0
+skinparam actorBackgroundColor #E3F2FD
+left to right direction
+
+
+' ── Entități externe ──
+actor "Elev" as Student
+rectangle "Kaggle\n(GPU, antrenare offline)" as Kaggle #F3E5F5
+
+' ── Procese ──
+usecase "P1\nAutentificare\n(JWT)" as P1
+usecase "P2\nRezolvare\nexerciții" as P2
+usecase "P3\nExtragere features\n(30 features)" as P3
+usecase "P4\nPredicție notă\n(VotingRegressor Top-5)" as P4
+usecase "P5\nGamificație\n(XP, streak, ligi)" as P5
+usecase "P6\nAntrenare model\n(prezicere-note.ipynb)" as P6 #F3E5F5
+
+' ── Depozite de date ──
+database "D1: users" as D1
+database "D2: exercises" as D2
+database "D3: attempts" as D3
+database "D4: grade_predictor_perfect.pkl\n(model + feature_names + metrici)" as D4
+database "D5: synthetic_attempts.json\n+ student_grades.json\n(date sintetice de antrenare)" as D5 #F3E5F5
+
+' ── Fluxuri: autentificare ──
+Student --> P1 : credențiale
+P1 --> D1 : cont nou / verificare
+D1 --> P1 : date utilizator
+P1 --> Student : token JWT
+
+' ── Fluxuri: rezolvare exerciții ──
+Student --> P2 : răspuns exercițiu
+D2 --> P2 : enunț, soluție,\nsubiect, dificultate
+P2 --> D3 : încercare\n(is_correct, time_spent)
+P2 --> P5 : rezultat încercare
+P5 --> D1 : XP, nivel, streak
+P5 --> Student : recompense, clasament
+
+' ── Fluxuri: predicția notei ──
+Student --> P3 : cerere predicție\n(GET /api/ml/predict-grade)
+D3 --> P3 : istoricul încercărilor
+D2 --> P3 : metadate exerciții\n(subiect, dificultate, temă)
+P3 --> P4 : feature_vector[30]
+D4 --> P4 : model antrenat
+P4 --> Student : nota prezisă, interval\nde încredere, insights
+
+' ── Fluxuri: antrenare offline (Kaggle) ──
+D5 --> P6 : 150 elevi ×\n8.750 încercări
+P6 --> Kaggle : 11 modele candidate,\nCV 5-fold × 3
+Kaggle --> P6 : Top-5 după RMSE\n→ VotingRegressor
+P6 --> D4 : artifact serializat\n(R²=0.97, MAE=0.28)
+
+@enduml

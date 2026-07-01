@@ -14,7 +14,7 @@ Parametri impliciți:
     dropout    = 0.1    (probabilitate dropout peste tot în model)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -58,8 +58,3 @@ class MathTransformerConfig:
 
     # Index SEP (separator între întrebare și răspuns)
     sep_idx: int = 4
-
-
-# ── Alias pentru compatibilitate cu codul existent ──
-# Backend-ul și evaluate.py importă "TransformerConfig" din model.py
-TransformerConfig = MathTransformerConfig

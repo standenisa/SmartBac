@@ -1,0 +1,60 @@
+@startuml Arhitectura Generala SmartBAC
+!theme plain
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam defaultFontSize 13
+
+
+package "Frontend" #E3F2FD {
+    [React Native\n(Expo SDK 54)] as FE
+    [16 Ecrane\nTypeScript] as Screens
+}
+
+package "Backend (FastAPI)" #E8F5E9 {
+    [FastAPI\nREST Routers] as API
+    [JWT Auth\n(HS256, 24h)] as Auth
+    [MathTutor\nRule-Based Solver\n(12 tipuri exercitii)] as Solver
+    [Ensemble ML\n(11 modele candidate,\nTop-5 Voting/Stacking)] as Predictor
+    [Gamificatie\nXP, 10 Nivele, Streak,\n8 Achievements] as Gamif
+    [Invatare Adaptiva\nSM-2] as Adaptive
+    [Ligi Competitive\n5 tiers saptamanale] as Leagues
+    [Daily Challenge\n+25 XP/zi] as Daily
+}
+
+package "Baza de Date" #FFF3E0 {
+    database "MongoDB" as DB {
+        [users]
+        [exercises]
+        [attempts]
+        [user_exercise_history]
+        [user_achievements]
+        [leagues]
+        [daily_challenge_attempts]
+        [chat_history]
+    }
+}
+
+package "Servicii AI (Kaggle GPU T4 / HuggingFace)" #F3E5F5 {
+    [DeepSeek-R1-Distill-Qwen-14B\n+ QLoRA (r=16)\nRezolvare exercitii + Chat] as LLM
+    [Qwen3-VL-8B + QLoRA (r=8)\nOCR din poze] as OCR
+}
+
+FE --> API : HTTP/REST (JSON)
+Screens --> FE
+API --> Auth
+API --> Solver
+API --> Predictor
+API --> Gamif
+API --> Adaptive
+API --> Leagues
+API --> Daily
+API --> DB
+Solver --> LLM : fallback (Flask+ngrok)
+API --> OCR : Flask+ngrok
+Predictor --> DB
+Gamif --> DB
+Adaptive --> DB
+Leagues --> DB
+Daily --> DB
+
+@enduml

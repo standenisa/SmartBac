@@ -1,11 +1,10 @@
 """
-Gamification Router - XP, levels, achievements, streaks
+Gamification Router - XP, levels, achievements, streaks, streak freeze
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database import get_db
-from models.user import user_to_dict
 from services.gamification import ACHIEVEMENTS_DEF, LEVEL_NAMES, XP_THRESHOLDS
 
 router = APIRouter(prefix="/api/gamification", tags=["gamification"])
@@ -32,6 +31,7 @@ def get_gamification_stats(user_id: int = Query(1), db=Depends(get_db)):
         "level_name": LEVEL_NAMES[min(level - 1, len(LEVEL_NAMES) - 1)],
         "current_streak": user.get("current_streak", 0) or 0,
         "best_streak": user.get("best_streak", 0) or 0,
+        "streak_freezes": user.get("streak_freezes", 0) or 0,
         "achievements_count": unlocked_count,
         "total_achievements": len(ACHIEVEMENTS_DEF),
     }
@@ -59,4 +59,31 @@ def get_achievements(user_id: int = Query(1), db=Depends(get_db)):
         "achievements": all_achievements,
         "unlocked_count": len(unlocked_ids),
         "total_count": len(ACHIEVEMENTS_DEF),
+    }
+
+
+@router.post("/streak/freeze")
+def use_streak_freeze(user_id: int = Query(1), db=Depends(get_db)):
+    """Use a streak freeze to protect the current streak."""
+    user = db.users.find_one({"_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    freezes = user.get("streak_freezes", 0) or 0
+    if freezes <= 0:
+        return {
+            "success": False,
+            "streak_freezes": 0,
+            "message": "Nu ai freeze-uri disponibile!",
+        }
+
+    db.users.update_one(
+        {"_id": user_id},
+        {"$inc": {"streak_freezes": -1}, "$set": {"streak_freeze_active": True}},
+    )
+
+    return {
+        "success": True,
+        "streak_freezes": freezes - 1,
+        "message": "Streak freeze activat! Streak-ul tau este protejat la urmatorul raspuns gresit.",
     }

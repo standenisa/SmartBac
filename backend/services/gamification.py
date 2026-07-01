@@ -28,8 +28,8 @@ def check_achievements_for_user(user_id: int, db) -> list:
     if not user:
         return []
 
-    attempts = list(db.attempts.find({"user_id": user_id}))
-    if not attempts:
+    total_count = db.attempts.count_documents({"user_id": user_id})
+    if total_count == 0:
         return []
 
     unlocked = [
@@ -38,8 +38,7 @@ def check_achievements_for_user(user_id: int, db) -> list:
     ]
 
     new_achievements = []
-    correct_count = sum(1 for a in attempts if a["is_correct"])
-    total_count = len(attempts)
+    correct_count = db.attempts.count_documents({"user_id": user_id, "is_correct": True})
     current_streak = user.get("current_streak", 0) or 0
 
     # First correct
@@ -74,9 +73,16 @@ def check_achievements_for_user(user_id: int, db) -> list:
             "achievement_id": ach_id,
             "unlocked_at": datetime.utcnow(),
         })
-        total_xp += ACHIEVEMENTS_DEF.get(ach_id, {}).get("xp", 10)
+        total_xp += ACHIEVEMENTS_DEF[ach_id]["xp"]
 
     if total_xp > 0:
         db.users.update_one({"_id": user_id}, {"$inc": {"xp": total_xp}})
 
-    return [{"id": a, **ACHIEVEMENTS_DEF.get(a, {})} for a in new_achievements]
+    # Award a freeze every 7 consecutive correct answers (cap 2)
+    if current_streak > 0 and current_streak % 7 == 0:
+        db.users.update_one(
+            {"_id": user_id, "streak_freezes": {"$lt": 2}},
+            {"$inc": {"streak_freezes": 1}},
+        )
+
+    return [{"id": a, **ACHIEVEMENTS_DEF[a]} for a in new_achievements]

@@ -226,7 +226,7 @@ def simulate_student_attempts_advanced(student_id, student_profile, num_attempts
     return attempts
 
 
-def calculate_student_grade_advanced(attempts, profile):
+def calculate_student_grade_advanced(attempts):
     """Calculează nota BAC cu mai multă precizie"""
     if not attempts:
         return 4.0  # Nota minimă
@@ -288,11 +288,9 @@ def calculate_student_grade_advanced(attempts, profile):
 
 def generate_dataset_advanced(num_students=150, min_attempts=15, max_attempts=100):
     """Generează dataset complet cu date avansate"""
-    print(f"\n{'='*60}")
-    print("🤖 BAC Prep AI - Generare Date Avansate")
-    print(f"{'='*60}")
-    print(f"📊 Generez date pentru {num_students} studenți...")
-    print(f"📝 Încercări per student: {min_attempts} - {max_attempts}")
+    print("\nBAC Prep AI - Generare Date Avansate")
+    print(f"Generez date pentru {num_students} studenți...")
+    print(f"Încercări per student: {min_attempts} - {max_attempts}")
 
     all_attempts = []
     student_grades = []
@@ -319,7 +317,7 @@ def generate_dataset_advanced(num_students=150, min_attempts=15, max_attempts=10
 
         all_attempts.extend(student_attempts)
 
-        grade = calculate_student_grade_advanced(student_attempts, profile)
+        grade = calculate_student_grade_advanced(student_attempts)
 
         # Calculează statistici pentru student
         correct = sum(1 for a in student_attempts if a['is_correct'])
@@ -355,23 +353,21 @@ def generate_dataset_advanced(num_students=150, min_attempts=15, max_attempts=10
         })
 
         if student_id % 25 == 0:
-            print(f"  ✓ Generat {student_id}/{num_students} studenți")
+            print(f"  Generat {student_id}/{num_students} studenți")
 
     # Statistici finale
-    print(f"\n{'='*60}")
-    print("📈 Statistici Dataset:")
-    print(f"{'='*60}")
-    print(f"   👥 Total studenți: {len(student_grades)}")
-    print(f"   📝 Total încercări: {len(all_attempts)}")
-    print(f"   📊 Media încercări/student: {len(all_attempts) / len(student_grades):.1f}")
+    print("\nStatistici Dataset:")
+    print(f"   Total studenți: {len(student_grades)}")
+    print(f"   Total încercări: {len(all_attempts)}")
+    print(f"   Media încercări/student: {len(all_attempts) / len(student_grades):.1f}")
 
     grades = [s['grade'] for s in student_grades]
-    print(f"\n   📈 Distribuție Note:")
+    print("\n   Distribuție Note:")
     print(f"      Media: {sum(grades)/len(grades):.2f}")
     print(f"      Min: {min(grades):.2f}")
     print(f"      Max: {max(grades):.2f}")
 
-    print(f"\n   👤 Distribuție Niveluri:")
+    print("\n   Distribuție Niveluri:")
     for level, count in level_distribution.items():
         print(f"      {level.capitalize()}: {count} ({count/num_students*100:.1f}%)")
 
@@ -382,7 +378,7 @@ def save_dataset_advanced(attempts, grades, suffix=''):
     """Salvează dataset-ul în format JSON"""
 
     # Creează directorul dacă nu există
-    data_dir = 'backend/data'
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
     os.makedirs(data_dir, exist_ok=True)
 
     attempts_file = f'{data_dir}/synthetic_attempts{suffix}.json'
@@ -394,9 +390,9 @@ def save_dataset_advanced(attempts, grades, suffix=''):
     with open(grades_file, 'w', encoding='utf-8') as f:
         json.dump(grades, f, indent=2, ensure_ascii=False)
 
-    print(f"\n💾 Date salvate în:")
-    print(f"   📁 {attempts_file} ({os.path.getsize(attempts_file) / 1024:.1f} KB)")
-    print(f"   📁 {grades_file} ({os.path.getsize(grades_file) / 1024:.1f} KB)")
+    print("\nDate salvate în:")
+    print(f"   {attempts_file} ({os.path.getsize(attempts_file) / 1024:.1f} KB)")
+    print(f"   {grades_file} ({os.path.getsize(grades_file) / 1024:.1f} KB)")
 
 
 if __name__ == '__main__':
@@ -404,7 +400,5 @@ if __name__ == '__main__':
     attempts, grades = generate_dataset_advanced(num_students=150)
     save_dataset_advanced(attempts, grades)
 
-    print(f"\n{'='*60}")
-    print("🎉 Date generate cu succes!")
-    print("   Acum rulează: python ml_predictor_advanced.py")
-    print(f"{'='*60}")
+    print("\nDate generate cu succes!")
+    print("Acum rulează: python ml_predictor_advanced.py")

@@ -1,574 +1,315 @@
-import { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, Dimensions } from 'react-native';
+import { useState, useEffect, useRef } from 'react';
+import { StyleSheet, View, Text, ScrollView, Animated as RNAnimated } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeInDown, FadeInUp, FadeIn } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
+import { apiGet } from '@/services/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { DUO } from '@/constants/duo';
+import ProgressRing from '@/components/ProgressRing';
+import { StatsCardSkeleton } from '@/components/Skeleton';
 
-const screenWidth = Dimensions.get('window').width;
-
-interface Stats {
+interface PredictionData {
+  predicted_grade: number;
+  confidence_interval: number[];
+  confidence_level: string;
   total_attempts: number;
-  correct_answers: number;
-  accuracy: number;
+  breakdown: Record<string, { accuracy: number; estimated_points: number; max_points: number; exercises_solved: number }>;
+  insights: { type: string; message: string }[];
 }
 
-interface SubjectStats {
-  subject: number;
-  total: number;
-  correct: number;
-  accuracy: number;
+const GRADE_CFG: Record<string, { icon: keyof typeof Ionicons.glyphMap; title: string; sub: string; colors: [string, string] }> = {
+  excellent: { icon: 'trophy', title: 'Excelent!', sub: 'Ești pregătit pentru nota maximă!', colors: ['#FBBF24', '#F59E0B'] },
+  great: { icon: 'rocket', title: 'Foarte bine!', sub: 'Continuă tot așa!', colors: ['#34D399', '#06B6D4'] },
+  good: { icon: 'fitness', title: 'Bine!', sub: 'Încă puțin efort și vei excela!', colors: ['#60A5FA', '#8B5CF6'] },
+  ok: { icon: 'book', title: 'Poți mai mult!', sub: 'Focus pe subiectele slabe.', colors: ['#FB923C', '#FBBF24'] },
+  low: { icon: 'disc', title: 'Hai la treabă!', sub: 'Exercițiu constant = progres.', colors: ['#F87171', '#FB923C'] },
+};
+
+function getGradeLevel(g: number) {
+  if (g >= 9) return 'excellent';
+  if (g >= 7.5) return 'great';
+  if (g >= 6) return 'good';
+  if (g >= 5) return 'ok';
+  return 'low';
+}
+function getGradeColor(g: number) {
+  if (g >= 9) return '#FBBF24';
+  if (g >= 7.5) return DUO.green;
+  if (g >= 6) return DUO.blue;
+  if (g >= 5) return DUO.orange;
+  return DUO.red;
 }
 
-interface TopicStats {
-  topic: string;
-  total: number;
-  correct: number;
-  accuracy: number;
-}
-
-interface DifficultyStats {
-  difficulty: number;
-  total: number;
-  correct: number;
-  accuracy: number;
-}
+const INSIGHT_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = { positive: 'checkmark-circle', warning: 'alert-circle', focus: 'scan', tip: 'star' };
+const INSIGHT_COLORS: Record<string, string> = { positive: '#34D399', warning: '#F87171', focus: '#FB923C', tip: '#60A5FA' };
+const SUBJ = ['', 'Subiectul I', 'Subiectul II', 'Subiectul III'];
+const SUBJ_DESC = ['', '30 puncte · Multiple choice', '30 puncte · Probleme', '30 puncte · Analiză'];
+const SUBJ_COLORS = ['', '#34D399', '#60A5FA', '#A78BFA'];
 
 export default function AnalyticsScreen() {
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [subjectStats, setSubjectStats] = useState<SubjectStats[]>([]);
-  const [topicStats, setTopicStats] = useState<TopicStats[]>([]);
-  const [difficultyStats, setDifficultyStats] = useState<DifficultyStats[]>([]);
-  const [recentActivity, setRecentActivity] = useState<number[]>([]);
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [prediction, setPrediction] = useState<number | null>(null);
+  const [prediction, setPrediction] = useState<PredictionData | null>(null);
+  const pulseAnim = useRef(new RNAnimated.Value(1)).current;
 
   useEffect(() => {
-    fetchAllData();
-  }, []);
+    if (!user?.id) return;
+    fetchAll();
+  }, [user?.id]);
 
-  const fetchAllData = async () => {
+  useEffect(() => {
+    if (!prediction) return;
+    RNAnimated.loop(RNAnimated.sequence([
+      RNAnimated.timing(pulseAnim, { toValue: 1.04, duration: 2200, useNativeDriver: true }),
+      RNAnimated.timing(pulseAnim, { toValue: 1, duration: 2200, useNativeDriver: true }),
+    ])).start();
+  }, [prediction]);
+
+  const fetchAll = async () => {
     try {
-      // Fetch basic stats
-      const statsRes = await fetch('http://localhost:5000/api/stats');
-      const statsData = await statsRes.json();
-      setStats(statsData);
-
-      // Fetch detailed analytics
-      const analyticsRes = await fetch('http://localhost:5000/api/analytics/detailed');
-      const analyticsData = await analyticsRes.json();
-
-      if (analyticsData.success) {
-        setSubjectStats(analyticsData.by_subject || []);
-        setTopicStats(analyticsData.by_topic || []);
-        setDifficultyStats(analyticsData.by_difficulty || []);
-        setRecentActivity(analyticsData.recent_activity || []);
-      }
-
-      // Fetch prediction
-      const predRes = await fetch('http://localhost:5000/api/ml/predict-grade');
-      const predData = await predRes.json();
-      if (predData.predicted_grade) {
-        setPrediction(predData.predicted_grade);
-      }
-    } catch (error) {
-      console.log('Error fetching analytics:', error);
-    }
+      const predData = await apiGet<any>(`/api/ml/predict-grade?user_id=${user?.id}`);
+      if (predData.success && predData.prediction) setPrediction(predData.prediction);
+    } catch (e) { console.log(e); }
     setLoading(false);
   };
 
-  const getAccuracyColor = (accuracy: number) => {
-    if (accuracy >= 80) return '#10b981';
-    if (accuracy >= 60) return '#f59e0b';
-    if (accuracy >= 40) return '#f97316';
-    return '#ef4444';
-  };
+  if (loading) return (
+    <View style={[styles.container, { paddingTop: insets.top + 40 }]}>
+      <StatsCardSkeleton /><StatsCardSkeleton />
+    </View>
+  );
 
-  const getGradeColor = (grade: number): [string, string] => {
-    if (grade >= 9) return ['#10b981', '#059669'];
-    if (grade >= 7) return ['#f59e0b', '#d97706'];
-    if (grade >= 5) return ['#f97316', '#ea580c'];
-    return ['#ef4444', '#dc2626'];
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>Se încarcă analizele...</Text>
-      </View>
-    );
-  }
+  const grade = prediction?.predicted_grade || 0;
+  const lvl = getGradeLevel(grade);
+  const color = getGradeColor(grade);
+  const cfg = GRADE_CFG[lvl];
+  const conf = prediction?.confidence_interval;
+  const confLvl = prediction?.confidence_level;
+  const levelColor = confLvl === 'high' || confLvl === 'very_high' ? DUO.green :
+    confLvl === 'medium' ? DUO.yellow : DUO.orange;
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Header */}
-      <LinearGradient
-        colors={['#3b82f6', '#1d4ed8']}
-        style={styles.header}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        <Text style={styles.headerTitle}>📊 Analytics</Text>
-        <Text style={styles.headerSubtitle}>Analizează-ți progresul</Text>
-      </LinearGradient>
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
 
-      {/* Prediction Card */}
-      {prediction && (
-        <View style={styles.predictionCard}>
+      {/* ─── HERO ─── */}
+      {prediction ? (
+        <View style={[styles.hero, { paddingTop: insets.top + 12 }]}>
           <LinearGradient
-            colors={getGradeColor(prediction)}
-            style={styles.predictionGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          >
-            <Text style={styles.predictionLabel}>Predicție Notă BAC</Text>
-            <Text style={styles.predictionValue}>{prediction.toFixed(2)}</Text>
-            <Text style={styles.predictionHint}>Bazat pe performanța ta actuală</Text>
-          </LinearGradient>
+            colors={[cfg.colors[0] + '12', cfg.colors[1] + '08', 'transparent']}
+            style={StyleSheet.absoluteFill}
+          />
+
+          <Animated.View entering={FadeInDown.delay(100).springify()}>
+            <Text style={styles.pageLabel}>PREDICȚIE BAC</Text>
+          </Animated.View>
+
+          <Animated.View entering={FadeInDown.delay(200).springify()} style={styles.ringWrap}>
+            <RNAnimated.View style={{ transform: [{ scale: pulseAnim }] }}>
+              <ProgressRing progress={grade / 10} size={170} strokeWidth={14} color={color}>
+                <Text style={[styles.gradeNum, { color }]}>{grade.toFixed(1)}</Text>
+                <Text style={styles.gradeOf}>din 10</Text>
+              </ProgressRing>
+            </RNAnimated.View>
+          </Animated.View>
+
+          <Animated.View entering={FadeInDown.delay(300).springify()} style={styles.heroMeta}>
+            <Text style={styles.heroTitle}>{cfg.title}</Text>
+            <Text style={styles.heroSub}>{cfg.sub}</Text>
+          </Animated.View>
+
+          {conf && (
+            <Animated.View entering={FadeIn.delay(500)} style={styles.confRow}>
+              <View style={[styles.confChip, { borderColor: color + '35' }]}>
+                <Text style={styles.confChipLabel}>MIN</Text>
+                <Text style={[styles.confChipVal, { color }]}>{conf[0].toFixed(1)}</Text>
+              </View>
+              <View style={[styles.confDash, { backgroundColor: color + '30' }]} />
+              <View style={[styles.confChip, { borderColor: color + '35' }]}>
+                <Text style={styles.confChipLabel}>MAX</Text>
+                <Text style={[styles.confChipVal, { color }]}>{conf[1].toFixed(1)}</Text>
+              </View>
+            </Animated.View>
+          )}
+        </View>
+      ) : (
+        <View style={[styles.hero, { paddingTop: insets.top + 40 }]}>
+          <Text style={styles.pageLabel}>PREDICȚIE BAC</Text>
+          <Ionicons name="stats-chart" size={56} color={DUO.textMuted} style={{ marginVertical: 20 }} />
+          <Text style={styles.heroTitle}>Predicție Notă</Text>
+          <Text style={styles.heroSub}>Rezolvă minim 10 exerciții pentru predicție</Text>
         </View>
       )}
 
-      {/* Overview Stats */}
-      <View style={styles.overviewCard}>
-        <Text style={styles.cardTitle}>Sumar General</Text>
-        <View style={styles.overviewGrid}>
-          <View style={styles.overviewItem}>
-            <Text style={styles.overviewValue}>{stats?.total_attempts || 0}</Text>
-            <Text style={styles.overviewLabel}>Exerciții</Text>
-          </View>
-          <View style={styles.overviewItem}>
-            <Text style={styles.overviewValue}>{stats?.correct_answers || 0}</Text>
-            <Text style={styles.overviewLabel}>Corecte</Text>
-          </View>
-          <View style={styles.overviewItem}>
-            <Text style={[styles.overviewValue, { color: getAccuracyColor(stats?.accuracy || 0) }]}>
-              {stats?.accuracy || 0}%
-            </Text>
-            <Text style={styles.overviewLabel}>Acuratețe</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Subject Performance */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.cardTitle}>Performanță pe Subiecte</Text>
-        {[1, 2, 3].map((subj) => {
-          const subjData = subjectStats.find(s => s.subject === subj);
-          const accuracy = subjData?.accuracy || 0;
-          const total = subjData?.total || 0;
-          const correct = subjData?.correct || 0;
-
-          return (
-            <View key={subj} style={styles.barRow}>
-              <View style={styles.barLabel}>
-                <Text style={styles.barLabelText}>Subiectul {subj}</Text>
-                <Text style={styles.barLabelStats}>{correct}/{total}</Text>
-              </View>
-              <View style={styles.barContainer}>
-                <View
-                  style={[
-                    styles.bar,
-                    {
-                      width: `${Math.min(accuracy, 100)}%`,
-                      backgroundColor: getAccuracyColor(accuracy),
-                    },
-                  ]}
-                />
-              </View>
-              <Text style={[styles.barValue, { color: getAccuracyColor(accuracy) }]}>
-                {accuracy.toFixed(0)}%
-              </Text>
-            </View>
-          );
-        })}
-      </View>
-
-      {/* Difficulty Performance */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.cardTitle}>Performanță pe Dificultate</Text>
-        {[1, 2, 3, 4].map((diff) => {
-          const diffData = difficultyStats.find(d => d.difficulty === diff);
-          const accuracy = diffData?.accuracy || 0;
-          const total = diffData?.total || 0;
-
-          const diffLabels = ['', 'Ușor', 'Mediu', 'Dificil', 'Expert'];
-          const diffEmojis = ['', '🟢', '🟡', '🟠', '🔴'];
-
-          return (
-            <View key={diff} style={styles.barRow}>
-              <View style={styles.barLabel}>
-                <Text style={styles.barLabelText}>
-                  {diffEmojis[diff]} {diffLabels[diff]}
-                </Text>
-                <Text style={styles.barLabelStats}>{total} ex.</Text>
-              </View>
-              <View style={styles.barContainer}>
-                <View
-                  style={[
-                    styles.bar,
-                    {
-                      width: `${Math.min(accuracy, 100)}%`,
-                      backgroundColor: getAccuracyColor(accuracy),
-                    },
-                  ]}
-                />
-              </View>
-              <Text style={[styles.barValue, { color: getAccuracyColor(accuracy) }]}>
-                {total > 0 ? `${accuracy.toFixed(0)}%` : '-'}
-              </Text>
-            </View>
-          );
-        })}
-      </View>
-
-      {/* Topic Heatmap */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.cardTitle}>Heatmap Topicuri</Text>
-        <Text style={styles.cardSubtitle}>Culorile arată punctele forte și slabe</Text>
-        <View style={styles.heatmapGrid}>
-          {topicStats.slice(0, 12).map((topic, index) => (
-            <View
-              key={index}
-              style={[
-                styles.heatmapCell,
-                { backgroundColor: getAccuracyColor(topic.accuracy) + '30' },
-              ]}
-            >
-              <Text style={styles.heatmapEmoji}>
-                {topic.accuracy >= 80 ? '💪' : topic.accuracy >= 50 ? '📚' : '🎯'}
-              </Text>
-              <Text style={styles.heatmapTopic} numberOfLines={2}>
-                {topic.topic}
-              </Text>
-              <Text style={[styles.heatmapAccuracy, { color: getAccuracyColor(topic.accuracy) }]}>
-                {topic.accuracy.toFixed(0)}%
-              </Text>
-            </View>
-          ))}
-        </View>
-
-        {topicStats.length === 0 && (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateEmoji}>📝</Text>
-            <Text style={styles.emptyStateText}>
-              Rezolvă mai multe exerciții pentru a vedea analiza pe topicuri
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* Activity Chart (Simple) */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.cardTitle}>Activitate Recentă</Text>
-        <Text style={styles.cardSubtitle}>Ultimele 7 zile</Text>
-        <View style={styles.activityChart}>
-          {(recentActivity.length > 0 ? recentActivity : [0, 0, 0, 0, 0, 0, 0]).map((count, index) => {
-            const maxCount = Math.max(...recentActivity, 1);
-            const height = (count / maxCount) * 100;
-            const days = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
-
+      {/* ─── SUBJECTS ─── */}
+      {prediction?.breakdown && Object.keys(prediction.breakdown).length > 0 && (
+        <Animated.View entering={FadeInUp.delay(500).springify()} style={styles.section}>
+          <Text style={styles.sectionTitle}>Performanță pe subiecte</Text>
+          {[1, 2, 3].map((subj, idx) => {
+            const key = `subject_${subj}`;
+            const data = prediction.breakdown[key];
+            if (!data) return null;
+            const pct = data.accuracy;
+            const sc = SUBJ_COLORS[subj];
             return (
-              <View key={index} style={styles.activityBarWrapper}>
-                <View style={styles.activityBarContainer}>
-                  <View
-                    style={[
-                      styles.activityBar,
-                      {
-                        height: `${Math.max(height, 5)}%`,
-                        backgroundColor: count > 0 ? '#3b82f6' : '#e5e7eb',
-                      },
-                    ]}
+              <Animated.View key={subj} entering={FadeInUp.delay(550 + idx * 80).springify()}>
+                <View style={styles.subjCard}>
+                  <View style={styles.subjLeft}>
+                    <View style={[styles.subjDot, { backgroundColor: sc }]} />
+                    <View>
+                      <Text style={styles.subjName}>{SUBJ[subj]}</Text>
+                      <Text style={styles.subjDesc}>{SUBJ_DESC[subj]}</Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.subjPts, { color: sc }]}>
+                    {data.estimated_points.toFixed(0)}<Text style={styles.subjPtsMax}>/{data.max_points}</Text>
+                  </Text>
+                </View>
+                <View style={styles.barOuter}>
+                  <LinearGradient
+                    colors={[sc, sc + '70']}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                    style={[styles.barInner, { width: `${Math.min(pct, 100)}%` }]}
                   />
                 </View>
-                <Text style={styles.activityDay}>{days[index]}</Text>
-                <Text style={styles.activityCount}>{count}</Text>
-              </View>
+                <View style={styles.subjFooter}>
+                  <Text style={styles.subjFooterText}>{pct.toFixed(0)}% acuratețe</Text>
+                  <Text style={styles.subjFooterText}>{data.exercises_solved} exerciții</Text>
+                </View>
+              </Animated.View>
             );
           })}
-        </View>
-      </View>
+        </Animated.View>
+      )}
 
-      {/* Tips Based on Performance */}
-      <View style={styles.tipsCard}>
-        <Text style={styles.cardTitle}>💡 Recomandări</Text>
-        {stats && stats.accuracy < 50 && (
-          <View style={styles.tipItem}>
-            <Text style={styles.tipIcon}>📚</Text>
-            <Text style={styles.tipText}>
-              Acuratețea ta este sub 50%. Încearcă să revezi teoria înainte de a rezolva exerciții.
-            </Text>
+      {/* ─── INSIGHTS ─── */}
+      {prediction?.insights && prediction.insights.length > 0 && (
+        <Animated.View entering={FadeInUp.delay(700).springify()} style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recomandări</Text>
+            <View style={styles.aiBadge}>
+              <Text style={styles.aiBadgeText}>AI</Text>
+            </View>
           </View>
-        )}
-        {stats && stats.accuracy >= 50 && stats.accuracy < 70 && (
-          <View style={styles.tipItem}>
-            <Text style={styles.tipIcon}>💪</Text>
-            <Text style={styles.tipText}>
-              Ești pe drumul cel bun! Concentrează-te pe subiectele cu acuratețe mai mică.
-            </Text>
-          </View>
-        )}
-        {stats && stats.accuracy >= 70 && (
-          <View style={styles.tipItem}>
-            <Text style={styles.tipIcon}>🚀</Text>
-            <Text style={styles.tipText}>
-              Excelent! Încearcă exerciții mai dificile pentru a te pregăti și mai bine.
-            </Text>
-          </View>
-        )}
-        {(!stats || stats.total_attempts < 10) && (
-          <View style={styles.tipItem}>
-            <Text style={styles.tipIcon}>🎯</Text>
-            <Text style={styles.tipText}>
-              Rezolvă mai multe exerciții pentru a primi recomandări personalizate.
-            </Text>
-          </View>
-        )}
-      </View>
+          {prediction.insights.map((ins, i) => {
+            const ic = INSIGHT_COLORS[ins.type] || DUO.blue;
+            return (
+              <Animated.View key={i} entering={FadeInUp.delay(750 + i * 60).springify()}>
+                <View style={styles.insightCard}>
+                  <View style={[styles.insightBullet, { backgroundColor: ic + '18' }]}>
+                    <Ionicons name={INSIGHT_ICONS[ins.type] || 'star'} size={16} color={ic} />
+                  </View>
+                  <Text style={styles.insightMsg}>{ins.message}</Text>
+                </View>
+              </Animated.View>
+            );
+          })}
+        </Animated.View>
+      )}
 
-      <View style={{ height: 100 }} />
+      {/* ─── MODEL INFO ─── */}
+      {prediction && (
+        <Animated.View entering={FadeInUp.delay(900).springify()} style={styles.modelCard}>
+          <View style={styles.modelRow}>
+            <Text style={styles.modelLabel}>Model</Text>
+            <Text style={styles.modelVal}>ML Ensemble</Text>
+          </View>
+          <View style={styles.modelDivider} />
+          <View style={styles.modelRow}>
+            <Text style={styles.modelLabel}>Încredere</Text>
+            <View style={[styles.levelPill, { backgroundColor: levelColor + '15' }]}>
+              <Text style={[styles.levelText, { color: levelColor }]}>
+                {confLvl === 'very_high' ? 'Foarte ridicată' : confLvl === 'high' ? 'Ridicată' :
+                  confLvl === 'medium' ? 'Medie' : 'Scăzută'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.modelDivider} />
+          <View style={styles.modelRow}>
+            <Text style={styles.modelLabel}>Date analizate</Text>
+            <Text style={styles.modelVal}>{prediction.total_attempts} exerciții</Text>
+          </View>
+        </Animated.View>
+      )}
+
     </ScrollView>
   );
 }
 
+const F = DUO;
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f7fa',
+  container: { flex: 1, backgroundColor: F.bg },
+
+  // Hero
+  hero: { alignItems: 'center', paddingBottom: 28, paddingHorizontal: 24 },
+  pageLabel: {
+    fontSize: 11, fontFamily: F.fontBold, letterSpacing: 2.5,
+    color: F.textMuted, marginBottom: 16,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f7fa',
+  ringWrap: { marginBottom: 24 },
+  gradeNum: { fontSize: 52, fontFamily: F.fontBlack, letterSpacing: -2 },
+  gradeOf: { fontSize: 13, fontFamily: F.fontSemiBold, color: F.textMuted, marginTop: -4 },
+  heroMeta: { alignItems: 'center', marginBottom: 20 },
+  heroTitle: { fontSize: 24, fontFamily: F.fontBlack, color: F.textPrimary, letterSpacing: -0.5 },
+  heroSub: { fontSize: 14, fontFamily: F.fontMedium, color: F.textSecondary, marginTop: 6, textAlign: 'center' },
+
+  // Confidence chips
+  confRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  confChip: {
+    paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12,
+    borderWidth: 1, backgroundColor: F.card, alignItems: 'center',
   },
-  loadingText: {
-    fontSize: 18,
-    color: '#6b7280',
+  confChipLabel: { fontSize: 9, fontFamily: F.fontBold, color: F.textMuted, letterSpacing: 1.5, marginBottom: 2 },
+  confChipVal: { fontSize: 20, fontFamily: F.fontBlack },
+  confDash: { width: 20, height: 2, borderRadius: 1 },
+
+  // Sections
+  section: {
+    marginHorizontal: 16, marginTop: 20, backgroundColor: F.card,
+    borderRadius: F.radiusLg, padding: 20,
+    borderWidth: 1, borderColor: F.surface + '60',
   },
-  header: {
-    paddingTop: 60,
-    paddingBottom: 30,
-    paddingHorizontal: 24,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
+  sectionTitle: { fontSize: 16, fontFamily: F.fontBold, color: F.textPrimary, marginBottom: 18, letterSpacing: -0.2 },
+
+  // Subjects
+  subjCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  subjLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  subjDot: { width: 10, height: 10, borderRadius: 5 },
+  subjName: { fontSize: 14, fontFamily: F.fontBold, color: F.textPrimary },
+  subjDesc: { fontSize: 11, fontFamily: F.fontMedium, color: F.textMuted, marginTop: 1 },
+  subjPts: { fontSize: 22, fontFamily: F.fontBlack },
+  subjPtsMax: { fontSize: 14, fontFamily: F.fontSemiBold, color: F.textMuted },
+  barOuter: { height: 6, backgroundColor: F.surface + '80', borderRadius: 3, overflow: 'hidden', marginTop: 4 },
+  barInner: { height: '100%', borderRadius: 3 },
+  subjFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, marginBottom: 20 },
+  subjFooterText: { fontSize: 11, fontFamily: F.fontMedium, color: F.textMuted },
+
+  // AI badge
+  aiBadge: { backgroundColor: F.purple + '18', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  aiBadgeText: { fontSize: 10, fontFamily: F.fontBlack, color: F.purple, letterSpacing: 1 },
+
+  // Insights
+  insightCard: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 },
+  insightBullet: {
+    width: 36, height: 36, borderRadius: 10,
+    justifyContent: 'center', alignItems: 'center', marginRight: 14,
   },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: 'white',
-    marginBottom: 8,
+  insightMsg: { flex: 1, fontSize: 14, fontFamily: F.fontMedium, color: F.textPrimary, lineHeight: 21 },
+
+  // Model info
+  modelCard: {
+    marginHorizontal: 16, marginTop: 20, padding: 18,
+    backgroundColor: F.card, borderRadius: F.radiusLg,
+    borderWidth: 1, borderColor: F.surface + '60',
   },
-  headerSubtitle: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.9)',
-  },
-  predictionCard: {
-    marginHorizontal: 20,
-    marginTop: -20,
-    borderRadius: 20,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  predictionGradient: {
-    padding: 24,
-    alignItems: 'center',
-  },
-  predictionLabel: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.9)',
-    marginBottom: 8,
-  },
-  predictionValue: {
-    fontSize: 48,
-    fontWeight: '800',
-    color: 'white',
-  },
-  predictionHint: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 8,
-  },
-  overviewCard: {
-    backgroundColor: 'white',
-    marginHorizontal: 20,
-    marginTop: 20,
-    borderRadius: 16,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1f2937',
-    marginBottom: 16,
-  },
-  cardSubtitle: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: -12,
-    marginBottom: 16,
-  },
-  overviewGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  overviewItem: {
-    alignItems: 'center',
-  },
-  overviewValue: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#1f2937',
-  },
-  overviewLabel: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 4,
-  },
-  sectionCard: {
-    backgroundColor: 'white',
-    marginHorizontal: 20,
-    marginTop: 16,
-    borderRadius: 16,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  barRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  barLabel: {
-    width: 100,
-  },
-  barLabelText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
-  barLabelStats: {
-    fontSize: 11,
-    color: '#6b7280',
-  },
-  barContainer: {
-    flex: 1,
-    height: 12,
-    backgroundColor: '#e5e7eb',
-    borderRadius: 6,
-    marginHorizontal: 12,
-    overflow: 'hidden',
-  },
-  bar: {
-    height: '100%',
-    borderRadius: 6,
-  },
-  barValue: {
-    width: 45,
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'right',
-  },
-  heatmapGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  heatmapCell: {
-    width: (screenWidth - 72) / 3,
-    padding: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  heatmapEmoji: {
-    fontSize: 20,
-    marginBottom: 4,
-  },
-  heatmapTopic: {
-    fontSize: 10,
-    color: '#4b5563',
-    textAlign: 'center',
-    marginBottom: 4,
-    height: 28,
-  },
-  heatmapAccuracy: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  emptyState: {
-    alignItems: 'center',
-    padding: 20,
-  },
-  emptyStateEmoji: {
-    fontSize: 40,
-    marginBottom: 12,
-  },
-  emptyStateText: {
-    fontSize: 14,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  activityChart: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    height: 120,
-    paddingTop: 20,
-  },
-  activityBarWrapper: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  activityBarContainer: {
-    width: 24,
-    height: 80,
-    backgroundColor: '#f3f4f6',
-    borderRadius: 12,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
-  },
-  activityBar: {
-    width: '100%',
-    borderRadius: 12,
-  },
-  activityDay: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginTop: 6,
-    fontWeight: '600',
-  },
-  activityCount: {
-    fontSize: 10,
-    color: '#9ca3af',
-  },
-  tipsCard: {
-    backgroundColor: '#fffbeb',
-    marginHorizontal: 20,
-    marginTop: 16,
-    borderRadius: 16,
-    padding: 20,
-  },
-  tipItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  tipIcon: {
-    fontSize: 20,
-    marginRight: 12,
-  },
-  tipText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#78350f',
-    lineHeight: 20,
-  },
+  modelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
+  modelLabel: { fontSize: 13, fontFamily: F.fontMedium, color: F.textMuted },
+  modelVal: { fontSize: 13, fontFamily: F.fontBold, color: F.textPrimary },
+  modelDivider: { height: 1, backgroundColor: F.surface + '50', marginVertical: 2 },
+  levelPill: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 8 },
+  levelText: { fontSize: 12, fontFamily: F.fontBold },
 });

@@ -1675,24 +1675,3 @@ exercises_with_solutions = [
         'formula': None
     }
 ]
-
-
-def get_solution(exercise_id):
-    """Returnează rezolvarea completă pentru un exercițiu"""
-    for ex in exercises_with_solutions:
-        if ex['id'] == exercise_id:
-            return {
-                'id': ex['id'],
-                'question': ex['question'],
-                'answer': ex['answer'],
-                'solution_steps': ex.get('solution_steps', []),
-                'hints': ex.get('hints', []),
-                'explanation': ex.get('explanation', ''),
-                'formula': ex.get('formula', None)
-            }
-    return None
-
-
-def get_all_exercises():
-    """Returnează toate exercițiile cu rezolvări"""
-    return exercises_with_solutions

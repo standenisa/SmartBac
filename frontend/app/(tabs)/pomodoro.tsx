@@ -6,11 +6,9 @@ import {
   TouchableOpacity,
   Vibration,
   Animated,
-  Dimensions
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-
-const { width } = Dimensions.get('window');
+import { DUO } from '@/constants/duo';
 
 type TimerMode = 'work' | 'shortBreak' | 'longBreak';
 
@@ -27,9 +25,9 @@ const DEFAULT_TIMES: TimerConfig = {
 };
 
 const MODE_COLORS: Record<TimerMode, [string, string]> = {
-  work: ['#ef4444', '#dc2626'],
-  shortBreak: ['#22c55e', '#16a34a'],
-  longBreak: ['#3b82f6', '#2563eb'],
+  work: [DUO.red, DUO.redDark],
+  shortBreak: [DUO.green, DUO.greenDark],
+  longBreak: [DUO.blue, DUO.blueDark],
 };
 
 const MODE_LABELS: Record<TimerMode, string> = {
@@ -46,12 +44,10 @@ export default function PomodoroScreen() {
   const [totalFocusTime, setTotalFocusTime] = useState(0);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const progressAnim = useRef(new Animated.Value(0)).current;
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (isRunning) {
-      // Pulse animation
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -70,16 +66,6 @@ export default function PomodoroScreen() {
       pulseAnim.setValue(1);
     }
   }, [isRunning]);
-
-  useEffect(() => {
-    const totalTime = DEFAULT_TIMES[mode];
-    const progress = (totalTime - timeLeft) / totalTime;
-    Animated.timing(progressAnim, {
-      toValue: progress,
-      duration: 300,
-      useNativeDriver: false,
-    }).start();
-  }, [timeLeft, mode]);
 
   useEffect(() => {
     if (isRunning && timeLeft > 0) {
@@ -112,7 +98,6 @@ export default function PomodoroScreen() {
       const newSessions = sessionsCompleted + 1;
       setSessionsCompleted(newSessions);
 
-      // After 4 work sessions, take a long break
       if (newSessions % 4 === 0) {
         setMode('longBreak');
         setTimeLeft(DEFAULT_TIMES.longBreak);
@@ -156,12 +141,10 @@ export default function PomodoroScreen() {
     return `${mins}m`;
   };
 
-  const circumference = 2 * Math.PI * 140;
-
   return (
     <View style={styles.container}>
       <LinearGradient
-        colors={['#1f2937', '#111827']}
+        colors={[DUO.bgLight, DUO.bg]}
         style={styles.gradient}
       >
         {/* Header */}
@@ -177,13 +160,13 @@ export default function PomodoroScreen() {
               key={m}
               style={[
                 styles.modeButton,
-                mode === m && { backgroundColor: MODE_COLORS[m][0] }
+                mode === m && { backgroundColor: MODE_COLORS[m][0] + '30', borderColor: MODE_COLORS[m][0] + '50' }
               ]}
               onPress={() => switchMode(m)}
             >
               <Text style={[
                 styles.modeButtonText,
-                mode === m && styles.modeButtonTextActive
+                mode === m && { color: MODE_COLORS[m][0] }
               ]}>
                 {m === 'work' ? 'Focus' : m === 'shortBreak' ? 'Short' : 'Long'}
               </Text>
@@ -203,23 +186,6 @@ export default function PomodoroScreen() {
               colors={MODE_COLORS[mode]}
               style={styles.timerCircleGradient}
             >
-              {/* Progress Ring */}
-              <View style={styles.progressRing}>
-                <Animated.View
-                  style={[
-                    styles.progressFill,
-                    {
-                      transform: [{
-                        rotate: progressAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: ['0deg', '360deg'],
-                        })
-                      }]
-                    }
-                  ]}
-                />
-              </View>
-
               <View style={styles.timerCircleInner}>
                 <Text style={styles.modeLabel}>{MODE_LABELS[mode]}</Text>
                 <Text style={styles.timerText}>{formatTime(timeLeft)}</Text>
@@ -241,11 +207,11 @@ export default function PomodoroScreen() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.mainButton}
+            style={[styles.mainButton, { shadowColor: MODE_COLORS[mode][0] }]}
             onPress={toggleTimer}
           >
             <LinearGradient
-              colors={isRunning ? ['#6b7280', '#4b5563'] : MODE_COLORS[mode]}
+              colors={isRunning ? [DUO.surface, DUO.surfaceLight] : MODE_COLORS[mode]}
               style={styles.mainButtonGradient}
             >
               <Text style={styles.mainButtonText}>
@@ -308,12 +274,12 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: '800',
-    color: 'white',
+    color: DUO.textPrimary,
     marginBottom: 4,
   },
   headerSubtitle: {
     fontSize: 14,
-    color: '#9ca3af',
+    color: DUO.textSecondary,
   },
   modeSelector: {
     flexDirection: 'row',
@@ -325,16 +291,15 @@ const styles = StyleSheet.create({
   modeButton: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: '#374151',
+    borderRadius: DUO.radiusFull,
+    backgroundColor: DUO.card,
+    borderWidth: 1,
+    borderColor: DUO.surface,
   },
   modeButtonText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#9ca3af',
-  },
-  modeButtonTextActive: {
-    color: 'white',
+    fontWeight: '700',
+    color: DUO.textMuted,
   },
   timerContainer: {
     alignItems: 'center',
@@ -352,41 +317,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  progressRing: {
-    position: 'absolute',
-    width: '100%',
-    height: '100%',
-    borderRadius: 140,
-  },
-  progressFill: {
-    position: 'absolute',
-    width: '100%',
-    height: '100%',
-  },
   timerCircleInner: {
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: '#1f2937',
+    backgroundColor: DUO.bg,
     justifyContent: 'center',
     alignItems: 'center',
   },
   modeLabel: {
     fontSize: 14,
-    color: '#9ca3af',
-    fontWeight: '500',
+    color: DUO.textSecondary,
+    fontWeight: '600',
     marginBottom: 8,
   },
   timerText: {
     fontSize: 56,
     fontWeight: '800',
-    color: 'white',
+    color: DUO.textPrimary,
     fontVariant: ['tabular-nums'],
   },
   sessionLabel: {
     fontSize: 12,
-    color: '#6b7280',
+    color: DUO.textMuted,
     marginTop: 8,
+    fontWeight: '600',
   },
   controls: {
     flexDirection: 'row',
@@ -401,17 +356,16 @@ const styles = StyleSheet.create({
   },
   resetButtonText: {
     fontSize: 16,
-    color: '#9ca3af',
-    fontWeight: '600',
+    color: DUO.textSecondary,
+    fontWeight: '700',
   },
   mainButton: {
     borderRadius: 30,
     overflow: 'hidden',
-    shadowColor: '#ef4444',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
   },
   mainButtonGradient: {
     paddingHorizontal: 50,
@@ -420,7 +374,7 @@ const styles = StyleSheet.create({
   mainButtonText: {
     fontSize: 18,
     fontWeight: '800',
-    color: 'white',
+    color: DUO.textPrimary,
     letterSpacing: 2,
   },
   skipButton: {
@@ -429,8 +383,8 @@ const styles = StyleSheet.create({
   },
   skipButtonText: {
     fontSize: 16,
-    color: '#9ca3af',
-    fontWeight: '600',
+    color: DUO.textSecondary,
+    fontWeight: '700',
   },
   statsContainer: {
     flexDirection: 'row',
@@ -441,37 +395,43 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#374151',
-    borderRadius: 16,
+    backgroundColor: DUO.card,
+    borderRadius: DUO.radius,
     padding: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: DUO.surface,
   },
   statNumber: {
     fontSize: 24,
     fontWeight: '800',
-    color: 'white',
+    color: DUO.textPrimary,
     marginBottom: 4,
   },
   statLabel: {
     fontSize: 11,
-    color: '#9ca3af',
+    color: DUO.textMuted,
     textAlign: 'center',
+    fontWeight: '600',
   },
   tipsCard: {
     marginHorizontal: 20,
-    backgroundColor: '#374151',
-    borderRadius: 16,
+    backgroundColor: DUO.card,
+    borderRadius: DUO.radius,
     padding: 16,
+    borderWidth: 1,
+    borderColor: DUO.yellow + '20',
   },
   tipsTitle: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#fbbf24',
+    fontWeight: '800',
+    color: DUO.yellow,
     marginBottom: 8,
   },
   tipsText: {
     fontSize: 13,
-    color: '#9ca3af',
+    color: DUO.textSecondary,
     lineHeight: 22,
+    fontWeight: '600',
   },
 });

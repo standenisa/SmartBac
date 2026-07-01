@@ -1,0 +1,117 @@
+@startuml Schema Baza de Date SmartBAC
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 12
+
+
+entity "users" as users {
+    * _id : int <<PK>>
+    --
+    email : string <<unique>>
+    username : string <<unique>>
+    password_hash : string
+    profile : string (M1/M2)
+    xp : int
+    level : int
+    current_streak : int
+    best_streak : int
+    streak_freezes : int
+    last_activity : datetime
+    created_at : datetime
+    updated_at : datetime
+}
+
+entity "exercises" as exercises {
+    * _id : int <<PK>>
+    --
+    subject : int (1, 2, 3)
+    topic : string
+    exercise_type : string
+    difficulty : int (1-5)
+    profile : string (M1/M2/BOTH)
+    question : string
+    answer : string
+    solution : string
+    solution_steps : list
+    hints : list[string]
+    explanation : string
+    formula : string
+    latex : string
+    year : int
+    source : string
+}
+
+entity "attempts" as attempts {
+    * _id : int <<PK>>
+    --
+    user_id : int <<FK>>
+    exercise_id : int <<FK>>
+    answer : string
+    is_correct : bool
+    time_spent : int
+    created_at : datetime
+}
+
+entity "user_achievements" as achievements {
+    * _id : ObjectId <<PK>>
+    --
+    user_id : int <<FK>>
+    achievement_id : string
+    unlocked_at : datetime
+}
+
+entity "user_exercise_history" as history {
+    * _id : ObjectId <<PK>>
+    --
+    user_id : int <<FK>>
+    exercise_id : int <<FK>>
+    topic : string
+    difficulty : int
+    quality : int (1-4)
+    repetition : int
+    ease_factor : float
+    next_review : datetime
+    last_reviewed : datetime
+}
+
+entity "leagues" as leagues {
+    * _id : ObjectId <<PK>>
+    --
+    user_id : int <<FK>>
+    week_start : string
+    league : string
+    weekly_xp : int
+}
+
+entity "daily_challenge_attempts" as daily {
+    * _id : ObjectId <<PK>>
+    --
+    user_id : int <<FK>>
+    date : string
+    exercise_id : int <<FK>>
+    is_correct : bool
+    attempt_count : int
+    submitted_at : datetime
+}
+
+entity "chat_history" as chat {
+    * _id : ObjectId <<PK>>
+    --
+    user_id : int <<FK>>
+    message : string
+    response : string
+    intent : string
+    timestamp : datetime
+}
+
+users ||--o{ attempts : "rezolva"
+users ||--o{ achievements : "deblocheaza"
+users ||--o{ history : "progres SM-2"
+users ||--o{ daily : "provocare zilnica"
+users ||--o{ leagues : "competitie"
+users ||--o{ chat : "conversatie"
+exercises ||--o{ attempts : "exercitiu"
+exercises ||--o{ history : "repetare"
+exercises ||--o{ daily : "provocare"
+
+@enduml

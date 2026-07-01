@@ -2,7 +2,7 @@
 Auth Router - JWT authentication endpoints
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 import jwt
 from datetime import datetime, timedelta
 import os
@@ -29,13 +29,13 @@ def generate_token(user_id: int, expires_in: int = 24) -> str:
 def decode_token(token: str) -> dict | None:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+    except jwt.InvalidTokenError:
         return None
 
 
-def get_current_user(token: str, db):
-    """Decode token and return user document."""
-    payload = decode_token(token)
+def get_current_user(authorization: str, db):
+    """Decode the bearer token from the Authorization header and return the user document."""
+    payload = decode_token(authorization.removeprefix("Bearer "))
     if not payload:
         raise HTTPException(status_code=401, detail="Token invalid sau expirat")
     user = db.users.find_one({"_id": payload["user_id"]})
@@ -89,16 +89,14 @@ def login(req: LoginRequest, db=Depends(get_db)):
 
 
 @router.get("/me")
-def get_me(authorization: str = "", db=Depends(get_db)):
-    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
-    user = get_current_user(token, db)
+def get_me(authorization: str = Header(""), db=Depends(get_db)):
+    user = get_current_user(authorization, db)
     return {"success": True, "user": user_to_dict(user)}
 
 
 @router.put("/me")
-def update_me(req: UserUpdate, authorization: str = "", db=Depends(get_db)):
-    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
-    user = get_current_user(token, db)
+def update_me(req: UserUpdate, authorization: str = Header(""), db=Depends(get_db)):
+    user = get_current_user(authorization, db)
 
     updates = {}
 
@@ -125,9 +123,8 @@ def update_me(req: UserUpdate, authorization: str = "", db=Depends(get_db)):
 
 
 @router.post("/refresh")
-def refresh(authorization: str = "", db=Depends(get_db)):
-    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
-    user = get_current_user(token, db)
+def refresh(authorization: str = Header(""), db=Depends(get_db)):
+    user = get_current_user(authorization, db)
     new_token = generate_token(user["_id"])
     return {"success": True, "token": new_token}
 

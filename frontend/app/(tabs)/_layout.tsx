@@ -1,34 +1,37 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { Platform, View, Text, StyleSheet } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import { DUO } from '@/constants/duo';
 
 interface TabIconProps {
-  emoji: string;
+  icon: keyof typeof Ionicons.glyphMap;
   label: string;
   focused: boolean;
-  colors: [string, string];
+  activeColor: string;
 }
 
-const TabIcon = ({ emoji, label, focused, colors }: TabIconProps) => (
+const TabIcon = ({ icon, label, focused, activeColor }: TabIconProps) => (
   <View style={styles.tabIconContainer}>
-    {focused ? (
-      <LinearGradient
-        colors={colors}
-        style={styles.activeTab}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        <Text style={styles.tabEmoji}>{emoji}</Text>
-      </LinearGradient>
-    ) : (
-      <View style={styles.inactiveTab}>
-        <Text style={styles.tabEmoji}>{emoji}</Text>
-      </View>
-    )}
-    <Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>
-      {label}
-    </Text>
+    <View style={[
+      styles.tabCircle,
+      focused && {
+        backgroundColor: activeColor + '20',
+        borderBottomColor: activeColor + '40',
+        shadowColor: activeColor,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.5,
+        shadowRadius: 12,
+        elevation: 4,
+      },
+    ]}>
+      <Ionicons
+        name={icon}
+        size={22}
+        color={focused ? activeColor : DUO.textMuted}
+      />
+    </View>
+    <Text style={[styles.tabLabel, focused && { color: activeColor }]}>{label}</Text>
   </View>
 );
 
@@ -36,20 +39,14 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: '#8b5cf6',
-        tabBarInactiveTintColor: '#9ca3af',
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: 'white',
-          borderTopWidth: 0,
+          backgroundColor: DUO.card,
+          borderTopWidth: 1,
+          borderTopColor: DUO.surface,
           height: Platform.OS === 'ios' ? 88 : 70,
           paddingTop: 8,
           paddingBottom: Platform.OS === 'ios' ? 28 : 10,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: 0.08,
-          shadowRadius: 12,
-          elevation: 10,
         },
         tabBarShowLabel: false,
       }}>
@@ -58,12 +55,7 @@ export default function TabLayout() {
         options={{
           title: 'Acasa',
           tabBarIcon: ({ focused }) => (
-            <TabIcon
-              emoji="🏠"
-              label="Acasa"
-              focused={focused}
-              colors={['#a78bfa', '#8b5cf6']}
-            />
+            <TabIcon icon="home" label="Acasa" focused={focused} activeColor={DUO.green} />
           ),
         }}
       />
@@ -72,26 +64,16 @@ export default function TabLayout() {
         options={{
           title: 'Exercitii',
           tabBarIcon: ({ focused }) => (
-            <TabIcon
-              emoji="✏️"
-              label="Exercitii"
-              focused={focused}
-              colors={['#f87171', '#ef4444']}
-            />
+            <TabIcon icon="create" label="Exercitii" focused={focused} activeColor={DUO.blue} />
           ),
         }}
       />
       <Tabs.Screen
         name="flashcards"
         options={{
-          title: 'Flashcards',
+          title: 'Cards',
           tabBarIcon: ({ focused }) => (
-            <TabIcon
-              emoji="🃏"
-              label="Cards"
-              focused={focused}
-              colors={['#a78bfa', '#8b5cf6']}
-            />
+            <TabIcon icon="albums" label="Cards" focused={focused} activeColor={DUO.purple} />
           ),
         }}
       />
@@ -100,72 +82,53 @@ export default function TabLayout() {
         options={{
           title: 'Streaks',
           tabBarIcon: ({ focused }) => (
-            <TabIcon
-              emoji="🔥"
-              label="Streaks"
-              focused={focused}
-              colors={['#fb923c', '#f97316']}
-            />
+            <TabIcon icon="flame" label="Streaks" focused={focused} activeColor={DUO.orange} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="scanner"
+        options={{
+          title: 'Scanner',
+          tabBarIcon: ({ focused }) => (
+            <TabIcon icon="scan" label="Scanner" focused={focused} activeColor={DUO.cyan} />
           ),
         }}
       />
       <Tabs.Screen
         name="chat"
         options={{
-          title: 'Chat AI',
+          title: 'Chat',
           tabBarIcon: ({ focused }) => (
-            <TabIcon
-              emoji="💬"
-              label="Chat"
-              focused={focused}
-              colors={['#34d399', '#10b981']}
-            />
+            <TabIcon icon="chatbubbles" label="Chat" focused={focused} activeColor={DUO.green} />
           ),
         }}
       />
-      {/* Hidden screens - accessible from other places */}
       <Tabs.Screen
-        name="exam"
+        name="study-plan"
         options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="theory"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="pomodoro"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="progress"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="achievements"
-        options={{
-          href: null,
+          title: 'Plan AI',
+          tabBarIcon: ({ focused }) => (
+            <TabIcon icon="compass" label="Plan AI" focused={focused} activeColor={DUO.purple} />
+          ),
         }}
       />
       <Tabs.Screen
         name="analytics"
         options={{
-          href: null,
+          title: 'Predictie',
+          tabBarIcon: ({ focused }) => (
+            <TabIcon icon="stats-chart" label="Predictie" focused={focused} activeColor={DUO.yellow} />
+          ),
         }}
       />
+      <Tabs.Screen name="exam" options={{ href: null }} />
+      <Tabs.Screen name="theory" options={{ href: null }} />
+      <Tabs.Screen name="pomodoro" options={{ href: null }} />
+      <Tabs.Screen name="progress" options={{ href: null }} />
+      <Tabs.Screen name="achievements" options={{ href: null }} />
+      <Tabs.Screen name="leagues" options={{ href: null }} />
+      <Tabs.Screen name="quick-practice" options={{ href: null }} />
     </Tabs>
   );
 }
@@ -174,37 +137,21 @@ const styles = StyleSheet.create({
   tabIconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 3,
   },
-  activeTab: {
+  tabCircle: {
     width: 44,
     height: 44,
     borderRadius: 14,
+    backgroundColor: DUO.surface,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#8b5cf6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  inactiveTab: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: '#f3f4f6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  tabEmoji: {
-    fontSize: 20,
+    borderBottomWidth: 3,
+    borderBottomColor: DUO.cardDark,
   },
   tabLabel: {
     fontSize: 10,
-    fontWeight: '600',
-    color: '#9ca3af',
-  },
-  tabLabelActive: {
-    color: '#8b5cf6',
+    fontWeight: '700',
+    color: DUO.textMuted,
   },
 });

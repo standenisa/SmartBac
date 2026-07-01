@@ -1,7 +1,7 @@
 # ============================================
 # BAZA DE DATE EXERCIȚII BAC MATEMATICĂ
 # Cu rezolvări complete pas cu pas
-# VERSIUNE EXTINSĂ - 200+ exerciții
+# VERSIUNE EXTINSĂ - 200+ exercițiiJJJ
 # ============================================
 
 EXERCISES_WITH_SOLUTIONS = [
@@ -2903,60 +2903,4 @@ M = 40/5 = 8
         'points': 10,
         'profile': 'M2'
     },
-]
-
-# ============================================
-# FUNCȚII HELPER
-# ============================================
-
-def get_solution(exercise_id):
-    """Returnează rezolvarea pentru un exercițiu"""
-    for ex in EXERCISES_WITH_SOLUTIONS:
-        if ex['id'] == exercise_id:
-            return ex.get('solution', 'Rezolvare indisponibilă')
-    return 'Exercițiu negăsit'
-
-def get_all_exercises():
-    """Returnează toate exercițiile"""
-    return EXERCISES_WITH_SOLUTIONS
-
-def filter_exercises(subject=None, topic=None, difficulty=None, profile=None):
-    """Filtrează exercițiile după criterii"""
-    result = EXERCISES_WITH_SOLUTIONS
-
-    if subject:
-        result = [e for e in result if e['subject'] == subject]
-    if topic:
-        result = [e for e in result if topic.lower() in e['topic'].lower()]
-    if difficulty:
-        result = [e for e in result if e['difficulty'] == difficulty]
-    if profile:
-        result = [e for e in result if e['profile'] in [profile, 'BOTH']]
-
-    return result
-
-def get_exercises_by_topic(topic):
-    """Returnează exercițiile pentru un anumit topic"""
-    return [e for e in EXERCISES_WITH_SOLUTIONS if topic.lower() in e['topic'].lower()]
-
-def get_random_exercise(difficulty=None, topic=None):
-    """Returnează un exercițiu aleatoriu"""
-    import random
-    filtered = EXERCISES_WITH_SOLUTIONS
-
-    if difficulty:
-        filtered = [e for e in filtered if e['difficulty'] == difficulty]
-    if topic:
-        filtered = [e for e in filtered if topic.lower() in e['topic'].lower()]
-
-    return random.choice(filtered) if filtered else None
-
-# Export
-__all__ = [
-    'EXERCISES_WITH_SOLUTIONS',
-    'get_solution',
-    'get_all_exercises',
-    'filter_exercises',
-    'get_exercises_by_topic',
-    'get_random_exercise'
 ]

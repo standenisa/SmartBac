@@ -33,17 +33,15 @@ Generarea (inferență):
     modelul generează câte un token pe rând folosind top-k sampling cu temperatură.
     Se oprește la <EOS> sau la limita de tokeni.
 
-Număr parametri cu config implicit (vocab=1347, d_model=256, n_layers=6):
-    ~5.4M parametri antrenabili.
+Număr parametri cu vocabularul real al tokenizer-ului (vocab≈1347, d_model=256,
+n_layers=6): ~5.4M parametri antrenabili.
 """
 
-import os
-import sys
 import math
 import torch
 import torch.nn as nn
 
-from .config import MathTransformerConfig, TransformerConfig
+from .config import MathTransformerConfig
 from .positional_encoding import SinusoidalPositionalEncoding
 from .transformer_block import TransformerBlock
 from .attention import create_causal_mask
@@ -224,6 +222,8 @@ class MathTransformer(nn.Module):
         Returns:
             (batch, seq_len + generated_len) — secvența completă cu tokenii generați.
         """
+        # Trecem în modul eval pe durata generării, apoi restaurăm modul anterior
+        was_training = self.training
         self.eval()
 
         if eos_idx is None:
@@ -245,7 +245,7 @@ class MathTransformer(nn.Module):
                 context = generated
 
             # Forward pass → logits de formă (batch, seq_len, vocab_size)
-            logits = self.forward(context)
+            logits = self(context)
 
             # Luăm logits-urile doar de la ULTIMA poziție
             # (predicția pentru următorul token)
@@ -283,12 +283,10 @@ class MathTransformer(nn.Module):
             if finished.all():
                 break
 
-        return generated
+        if was_training:
+            self.train()
 
-    @classmethod
-    def from_config(cls, config: MathTransformerConfig) -> "MathTransformer":
-        """Construiește un MathTransformer dintr-un obiect de configurație."""
-        return cls(config)
+        return generated
 
     @classmethod
     def from_pretrained(cls, checkpoint_path: str, device: str = "cpu") -> "MathTransformer":

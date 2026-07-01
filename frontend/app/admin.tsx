@@ -11,10 +11,12 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import { API_BASE_URL } from '@/constants/api';
 
 interface KnowledgeTopic {
   id: string;
-  keywords: string[];
+  name: string;
+  keywords?: string[];
 }
 
 export default function AdminScreen() {
@@ -31,7 +33,7 @@ export default function AdminScreen() {
   // Modal pentru editare
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // Parola de admin - schimb-o cu ce vrei tu!
+  // Doar gard de UI; endpoint-urile de knowledge din backend nu sunt autentificate
   const ADMIN_PASSWORD = 'bac2025admin';
 
   const handleLogin = () => {
@@ -45,11 +47,9 @@ export default function AdminScreen() {
 
   const fetchTopics = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/chat/knowledge');
+      const res = await fetch(`${API_BASE_URL}/api/chat/knowledge`);
       const data = await res.json();
-      if (data.success) {
-        setTopics(data.topics);
-      }
+      setTopics(data.topics ?? []);
     } catch (error) {
       console.log('Error fetching topics:', error);
     }
@@ -65,11 +65,11 @@ export default function AdminScreen() {
     try {
       const keywordsArray = keywords.split(',').map(k => k.trim().toLowerCase());
 
-      const res = await fetch('http://localhost:5000/api/chat/add-knowledge', {
+      const res = await fetch(`${API_BASE_URL}/api/chat/add-knowledge`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          topic_id: topicId.trim().toLowerCase().replace(/\s+/g, '_'),
+          topic: topicId.trim().toLowerCase().replace(/\s+/g, '_'),
           keywords: keywordsArray,
           response: response.trim()
         })
@@ -232,9 +232,9 @@ Poți folosi:
 
         {topics.map((topic, index) => (
           <View key={index} style={styles.topicCard}>
-            <Text style={styles.topicId}>{topic.id}</Text>
+            <Text style={styles.topicId}>{topic.name}</Text>
             <Text style={styles.topicKeywords}>
-              Cuvinte cheie: {topic.keywords.join(', ')}
+              Cuvinte cheie: {(topic.keywords ?? []).join(', ')}
             </Text>
           </View>
         ))}

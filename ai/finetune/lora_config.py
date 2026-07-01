@@ -3,7 +3,13 @@ LoRA Configuration for Qwen2.5-Math Fine-tuning
 Optimized for Apple Silicon M4 with MLX
 """
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
+
+
+SYSTEM_PROMPT = (
+    "Ești un asistent de matematică specializat pe exerciții BAC. "
+    "Rezolvă exercițiul pas cu pas, explicând fiecare etapă."
+)
 
 
 @dataclass
@@ -30,35 +36,29 @@ class LoRAConfig:
     max_seq_length: int = 512
     gradient_accumulation_steps: int = 4
 
-    # Data
-    data_path: str = "data/processed/augmented_exercises.json"
-    train_split: float = 0.85
-    val_split: float = 0.1
-    test_split: float = 0.05
+    # Data — folosește split-urile pre-generate dacă există
+    data_path: str = "data/processed/exercises_merged.json"
+    splits_dir: str = "data/splits/finetune"  # train.jsonl, val.jsonl, test.jsonl
+    train_split: float = 0.80
+    val_split: float = 0.10  # restul (0.10) merge în test
 
     # Output
     output_dir: str = "ai/finetune/adapters"
     save_every: int = 100  # Save checkpoint every N steps
 
-    # MLX specific
-    use_mlx: bool = True
     seed: int = 42
 
 
 @dataclass
 class InstructionTemplate:
     """Template for instruction tuning format"""
-    system_prompt: str = (
-        "Ești un asistent de matematică specializat pe exerciții BAC. "
-        "Rezolvă exercițiul pas cu pas, explicând fiecare etapă."
-    )
+    system_prompt: str = SYSTEM_PROMPT
 
     @staticmethod
     def format_prompt(question: str) -> str:
         return (
             f"<|im_start|>system\n"
-            f"Ești un asistent de matematică specializat pe exerciții BAC. "
-            f"Rezolvă exercițiul pas cu pas, explicând fiecare etapă.\n"
+            f"{SYSTEM_PROMPT}\n"
             f"<|im_end|>\n"
             f"<|im_start|>user\n"
             f"{question}\n"
@@ -72,8 +72,7 @@ class InstructionTemplate:
         response = f"{steps_text}\n\nRăspuns: {answer}"
         return (
             f"<|im_start|>system\n"
-            f"Ești un asistent de matematică specializat pe exerciții BAC. "
-            f"Rezolvă exercițiul pas cu pas, explicând fiecare etapă.\n"
+            f"{SYSTEM_PROMPT}\n"
             f"<|im_end|>\n"
             f"<|im_start|>user\n"
             f"{question}\n"

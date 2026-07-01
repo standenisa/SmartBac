@@ -27,9 +27,8 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from ai.tokenizer.bpe import MathBPETokenizer
-from ai.transformer.config import MathTransformerConfig
 from ai.transformer.model import MathTransformer
-from ai.transformer.train import MathDataset
+from ai.transformer.generate import pick_device
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -119,12 +118,7 @@ def evaluate_model(
         Dict cu exact_match, partial_match, bleu4, per_type.
     """
     # ── Device ──
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
+    device = pick_device()
     print(f"[DEVICE] {device}")
 
     # ── Tokenizer ──
@@ -151,6 +145,7 @@ def evaluate_model(
     hypotheses = []
     exact = 0
     partial = 0
+    type_stats = defaultdict(lambda: {"exact": 0, "partial": 0, "total": 0})
 
     print("[EVAL] Generare răspunsuri...")
     for i, item in enumerate(raw_data):
@@ -165,10 +160,11 @@ def evaluate_model(
         out = model.generate(inp, max_new_tokens=100, temperature=0.3, top_k=20)
         gen_ids = out[0].tolist()[len(prompt_ids):]
 
-        # Curățăm output-ul
+        # Păstrăm doar răspunsul: ne oprim la primul separator
+        # (modelul generează "răspuns <SEP> pas1 <SEP> ... <EOS>")
         clean = []
         for tid in gen_ids:
-            if tid in (eos_idx, pad_idx):
+            if tid in (eos_idx, pad_idx, sep_idx):
                 break
             clean.append(tid)
 
@@ -178,12 +174,19 @@ def evaluate_model(
         references.append(ref)
         hypotheses.append(hyp)
 
-        if ref == hyp:
-            exact += 1
+        is_exact = ref == hyp
         ref_tokens = set(ref.split())
         hyp_tokens = set(hyp.split())
-        if ref_tokens and len(ref_tokens & hyp_tokens) / len(ref_tokens) >= 0.5:
+        is_partial = bool(ref_tokens) and len(ref_tokens & hyp_tokens) / len(ref_tokens) >= 0.5
+
+        ex_type = item.get("type", "unknown")
+        type_stats[ex_type]["total"] += 1
+        if is_exact:
+            exact += 1
+            type_stats[ex_type]["exact"] += 1
+        if is_partial:
             partial += 1
+            type_stats[ex_type]["partial"] += 1
 
         if (i + 1) % 50 == 0:
             print(f"  {i + 1}/{len(raw_data)}...")
@@ -194,18 +197,6 @@ def evaluate_model(
     print(f"\n  Exact match:   {exact}/{total} ({exact/total:.1%})")
     print(f"  Partial match: {partial}/{total} ({partial/total:.1%})")
     print(f"  BLEU-4:        {bleu:.4f}")
-
-    # ── Per-type breakdown ──
-    type_stats = defaultdict(lambda: {"exact": 0, "partial": 0, "total": 0})
-    for i, item in enumerate(raw_data):
-        ex_type = item.get("type", "unknown")
-        type_stats[ex_type]["total"] += 1
-        if references[i] == hypotheses[i]:
-            type_stats[ex_type]["exact"] += 1
-        ref_t = set(references[i].split())
-        hyp_t = set(hypotheses[i].split())
-        if ref_t and len(ref_t & hyp_t) / len(ref_t) >= 0.5:
-            type_stats[ex_type]["partial"] += 1
 
     return {
         "exact_match": exact / max(total, 1),

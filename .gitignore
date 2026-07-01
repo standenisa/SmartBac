@@ -56,3 +56,12 @@ web-build/
 
 # MLX
 mlx_models/
+
+# Claude Code local settings/memory
+.claude/
+
+# Stray / personal files (not part of the project)
+*.pptx
+WhatsApp Image*.jpeg
+Fonturi-UT*.zip
+bac-prep-data.zip

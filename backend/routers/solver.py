@@ -39,7 +39,8 @@ def _get_transformer():
         model = MathTransformer.from_pretrained(checkpoint_path, device=str(device))
 
         _transformer_model = {"model": model, "tokenizer": tokenizer, "device": device}
-    except Exception:
+    except Exception as e:
+        print(f"[solver] transformer load failed: {e}")
         _transformer_model = None
 
     return _transformer_model
@@ -62,7 +63,8 @@ def _get_qwen():
             adapter_path = None
 
         _qwen_model = {"solve_fn": qwen_solve, "adapter_path": adapter_path}
-    except Exception:
+    except Exception as e:
+        print(f"[solver] qwen load failed: {e}")
         _qwen_model = None
 
     return _qwen_model
@@ -80,17 +82,16 @@ def solve_exercise(req: SolveRequest):
 
         try:
             import torch
-            from ai.tokenizer.bpe import MathBPETokenizer
 
             model = engine["model"]
             tokenizer = engine["tokenizer"]
             device = engine["device"]
 
             # Format autoregresiv: <BOS> question <SEP> → generează răspunsul
-            bos = MathBPETokenizer.SPECIAL_TOKENS["<BOS>"]
-            sep = MathBPETokenizer.SPECIAL_TOKENS["<SEP>"]
-            eos = MathBPETokenizer.SPECIAL_TOKENS["<EOS>"]
-            pad = MathBPETokenizer.SPECIAL_TOKENS["<PAD>"]
+            bos = tokenizer.SPECIAL_TOKENS["<BOS>"]
+            sep = tokenizer.SPECIAL_TOKENS["<SEP>"]
+            eos = tokenizer.SPECIAL_TOKENS["<EOS>"]
+            pad = tokenizer.SPECIAL_TOKENS["<PAD>"]
 
             prompt_ids = [bos] + tokenizer.encode(req.question) + [sep]
             input_tensor = torch.tensor([prompt_ids], dtype=torch.long).to(device)
@@ -105,12 +106,20 @@ def solve_exercise(req: SolveRequest):
                     break
                 clean_ids.append(tid)
 
-            decoded = tokenizer.decode(clean_ids)
+            decoded = tokenizer.decode(clean_ids, strip_special=False)
 
             # Parse: răspunsul și pașii sunt separați cu <SEP>
             parts = decoded.split("<SEP>") if "<SEP>" in decoded else [decoded]
-            answer = parts[0].strip()
-            steps = [s.strip() for s in parts[1:] if s.strip()]
+
+            # Curăță orice tokeni speciali rămași din fiecare parte
+            _SPECIAL = ("<BOS>", "<EOS>", "<PAD>", "<SEP>", "<UNK>")
+            def _clean(t: str) -> str:
+                for s in _SPECIAL:
+                    t = t.replace(s, "")
+                return t.strip()
+
+            answer = _clean(parts[0])
+            steps = [_clean(s) for s in parts[1:] if _clean(s)]
 
             return SolveResponse(
                 answer=answer,
@@ -122,22 +131,30 @@ def solve_exercise(req: SolveRequest):
 
     elif req.model == "qwen":
         qwen = _get_qwen()
-        if not qwen:
-            raise HTTPException(
-                status_code=503,
-                detail="Modelul Qwen+LoRA nu este disponibil. Antrenati-l mai intai.",
+        if qwen:
+            try:
+                result = qwen["solve_fn"](req.question, adapter_path=qwen["adapter_path"])
+                return SolveResponse(
+                    answer=result.get("answer", ""),
+                    steps=result.get("steps", []),
+                    model_used="qwen_lora",
+                    confidence=result.get("confidence"),
+                )
+            except Exception as e:
+                print(f"[solver] Qwen error: {e}")
+
+        # Fallback la modelul SmartBAC de pe Kaggle dacă Qwen nu e disponibil
+        from routers.chat import _ask_kaggle
+        sol = _ask_kaggle(req.question)
+        if sol:
+            structured = sol.get("structured", {})
+            return SolveResponse(
+                answer=structured.get("raspuns", ""),
+                steps=[p["actiune"] for p in structured.get("pasi", [])],
+                model_used="smartbac_ai",
             )
 
-        try:
-            result = qwen["solve_fn"](req.question, adapter_path=qwen["adapter_path"])
-            return SolveResponse(
-                answer=result.get("answer", ""),
-                steps=result.get("steps", []),
-                model_used="qwen_lora",
-                confidence=result.get("confidence"),
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Eroare la rezolvare: {str(e)}")
+        raise HTTPException(status_code=503, detail="Niciun model disponibil.")
 
 
 @router.get("/models")

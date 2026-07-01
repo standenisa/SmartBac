@@ -7,9 +7,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from datetime import datetime
-import os
 
-from database import init_db, get_db, get_next_id, client
+from database import init_db, get_db, client
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -54,6 +53,9 @@ from routers.solver import router as solver_router
 from routers.recommender import router as recommender_router
 from routers.tokenizer import router as tokenizer_router
 from routers.chat import router as chat_router
+from routers.daily_challenge import router as daily_challenge_router
+from routers.leagues import router as leagues_router
+from routers.scanner import router as scanner_router
 
 app.include_router(auth_router)
 app.include_router(exercises_router)
@@ -64,6 +66,9 @@ app.include_router(solver_router)
 app.include_router(recommender_router)
 app.include_router(tokenizer_router)
 app.include_router(chat_router)
+app.include_router(daily_challenge_router)
+app.include_router(leagues_router)
+app.include_router(scanner_router)
 
 
 # ── Root endpoints ──
@@ -90,37 +95,9 @@ def health_check():
         return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
 
 
-# ── User management (backward-compatible) ──
+# ── Profile ──
 
 from fastapi import Depends, Query
-from models.user import user_to_dict, create_user_doc
-
-
-@app.post("/api/users", status_code=201)
-def create_user(data: dict, db=Depends(get_db)):
-    if db.users.find_one({"email": data.get("email")}):
-        return {"error": "Email already exists"}
-    if db.users.find_one({"username": data.get("username")}):
-        return {"error": "Username already exists"}
-
-    user_id = get_next_id("users")
-    user_doc = create_user_doc(
-        user_id,
-        data.get("email"),
-        data.get("username"),
-        data.get("password", "default123"),
-        data.get("profile", "M1"),
-    )
-    db.users.insert_one(user_doc)
-    return {"success": True, "user": user_to_dict(user_doc)}
-
-
-@app.get("/api/users/{user_id}")
-def get_user(user_id: int, db=Depends(get_db)):
-    user = db.users.find_one({"_id": user_id})
-    if not user:
-        return {"error": "User not found"}
-    return user_to_dict(user)
 
 
 @app.post("/api/set-profile")
@@ -129,8 +106,9 @@ def set_profile(data: dict, db=Depends(get_db)):
     user = db.users.find_one({"_id": user_id})
     if not user:
         return {"error": "User not found"}
-    db.users.update_one({"_id": user_id}, {"$set": {"profile": data.get("profile", "M1")}})
-    return {"success": True, "profile": data.get("profile", "M1")}
+    profile = data.get("profile", "M1")
+    db.users.update_one({"_id": user_id}, {"$set": {"profile": profile}})
+    return {"success": True, "profile": profile}
 
 
 @app.get("/api/get-profile")
@@ -139,18 +117,12 @@ def get_profile(user_id: int = Query(1), db=Depends(get_db)):
     return {"profile": user.get("profile") if user else None}
 
 
-# ── Backward-compat alias ──
-from routers.stats import get_analytics_detailed
-
-app.get("/api/analytics/detailed", tags=["statistics"])(get_analytics_detailed)
-
-
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=5000,
+        port=5001,
         reload=True,
     )

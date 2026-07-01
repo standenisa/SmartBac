@@ -192,8 +192,6 @@ def text_to_latex(text: str) -> str:
     s = re.sub(r"sqrt\(([^)]+)\)", r"\\sqrt{\1}", s)
 
     # Exponents: x^12 or x^2 -> x^{12} or x^{2}
-    # Avoid double-bracing if already braced
-    s = re.sub(r"\^(\{[^}]+\})", r"^\1", s)  # already braced, leave alone
     s = re.sub(r"\^([0-9]+)", r"^{\1}", s)
 
     # Simple fractions: (expr)/(expr) -> \frac{expr}{expr}
@@ -352,58 +350,45 @@ def extract_math_from_question(question: str) -> str:
 # ---------------------------------------------------------------------------
 # Main conversion logic
 # ---------------------------------------------------------------------------
-def convert_exercise_db(exercise: dict, seen_ids: set) -> dict:
-    """Convert an exercise from exercises_database.py format."""
-    ex_id = exercise.get("id", 0)
-
-    # Handle duplicate IDs by generating a new unique one
-    while ex_id in seen_ids:
-        ex_id = max(seen_ids) + 1 if seen_ids else 1
+def _claim_id(ex_id, seen_ids: set):
+    """Handle duplicate IDs by generating a new unique one."""
+    if ex_id in seen_ids:
+        ex_id = max(seen_ids) + 1
     seen_ids.add(ex_id)
+    return ex_id
 
+
+def _build_exercise(exercise: dict, ex_id, steps: list, source: str) -> dict:
+    """Build the standardized exercise dict shared by both converters."""
     question = exercise.get("question", "")
-    answer = exercise.get("answer", "")
-    topic = exercise.get("topic", "")
-    difficulty = exercise.get("difficulty", 1)
-    profile = exercise.get("profile", "BOTH")
-    subject = exercise.get("subject", 1)
-    solution = exercise.get("solution", "")
-
-    steps = parse_solution_markdown(solution)
     math_expr = extract_math_from_question(question)
-    latex = text_to_latex(math_expr)
 
     return {
         "id": ex_id,
         "question": question,
-        "answer": str(answer),
-        "type": topic_to_type(topic),
+        "answer": str(exercise.get("answer", "")),
+        "type": topic_to_type(exercise.get("topic", "")),
         "steps": steps,
-        "latex": latex,
-        "source": "BAC 2024",
-        "difficulty": difficulty,
-        "profile": profile,
-        "subject": subject,
+        "latex": text_to_latex(math_expr),
+        "source": source,
+        "difficulty": exercise.get("difficulty", 1),
+        "profile": exercise.get("profile", "BOTH"),
+        "subject": exercise.get("subject", 1),
     }
+
+
+def convert_exercise_db(exercise: dict, seen_ids: set) -> dict:
+    """Convert an exercise from exercises_database.py format."""
+    ex_id = _claim_id(exercise.get("id", 0), seen_ids)
+    steps = parse_solution_markdown(exercise.get("solution", ""))
+    return _build_exercise(exercise, ex_id, steps, source="BAC 2024")
 
 
 def convert_exercise_solutions(exercise: dict, seen_ids: set) -> dict:
     """Convert an exercise from exercises_with_solutions.py format."""
-    ex_id = exercise.get("id", 0)
+    ex_id = _claim_id(exercise.get("id", 0), seen_ids)
 
-    while ex_id in seen_ids:
-        ex_id = max(seen_ids) + 1 if seen_ids else 1
-    seen_ids.add(ex_id)
-
-    question = exercise.get("question", "")
-    answer = exercise.get("answer", "")
-    topic = exercise.get("topic", "")
-    difficulty = exercise.get("difficulty", 1)
-    profile = exercise.get("profile", "BOTH")
-    subject = exercise.get("subject", 1)
-    solution_steps = exercise.get("solution_steps", [])
-
-    steps = parse_solution_steps(solution_steps)
+    steps = parse_solution_steps(exercise.get("solution_steps", []))
 
     # If no structured steps, try to build steps from explanation/hints
     if not steps:
@@ -416,25 +401,11 @@ def convert_exercise_solutions(exercise: dict, seen_ids: set) -> dict:
 
     # Extract source year from question if present (e.g. "BAC 2024 Iulie -")
     source = "BAC 2024"
-    source_match = re.match(r"(BAC\s+\d{4}(?:\s+\w+)?)", question)
+    source_match = re.match(r"(BAC\s+\d{4}(?:\s+\w+)?)", exercise.get("question", ""))
     if source_match:
         source = source_match.group(1)
 
-    math_expr = extract_math_from_question(question)
-    latex = text_to_latex(math_expr)
-
-    return {
-        "id": ex_id,
-        "question": question,
-        "answer": str(answer),
-        "type": topic_to_type(topic),
-        "steps": steps,
-        "latex": latex,
-        "source": source,
-        "difficulty": difficulty,
-        "profile": profile,
-        "subject": subject,
-    }
+    return _build_exercise(exercise, ex_id, steps, source=source)
 
 
 # ---------------------------------------------------------------------------

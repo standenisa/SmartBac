@@ -1,0 +1,61 @@
+@startuml Componente AI Pipeline
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 13
+
+
+package "Date" #E3F2FD {
+    [4.541 Exerciții BAC\nSubiect I, II, III (2008-2025)] as Data
+}
+
+package "Rezolvare exerciții" #FFF3E0 {
+    [MathTutor\nRule-Based (regex)] as Solver
+    [DeepSeek-R1-Distill-Qwen-14B\n+ QLoRA (NF4, r=16)] as LLM
+}
+
+package "OCR (scanare poze)" #F3E5F5 {
+    [Qwen3-VL-8B\n+ QLoRA (r=8)] as VLM
+}
+
+package "Predicție notă BAC" #FFEBEE {
+    [30 features\n(performanța elevului)] as Feat
+    [11 modele candidate\n(Ridge, SVR, RF, ExtraTrees,\nGB, HistGB, XGB, MLP, ...)] as Models
+    [Top-5 selectate automat\n(după RMSE CV)] as Top5
+    [Voting / Stacking\nRegressor] as Ensemble
+}
+
+package "Antrenare & Servire" #E8F5E9 {
+    [Kaggle GPU T4] as Kaggle
+    [HuggingFace Hub] as HF
+    [API Flask + ngrok] as Serve
+}
+
+Data --> LLM
+Data --> VLM
+Data --> Feat
+Feat --> Models
+Models --> Top5
+Top5 --> Ensemble
+
+Kaggle --> LLM : fine-tuning
+Kaggle --> VLM : fine-tuning
+Kaggle --> Ensemble : antrenare
+LLM --> HF
+VLM --> HF
+HF --> Serve
+
+note bottom of Solver
+  Treapta 1: tipuri clasice
+  100% corect
+end note
+
+note bottom of LLM
+  Treapta 2: raționament <think>
+end note
+
+note bottom of Ensemble
+  Salvat .pkl / .joblib
+  încărcat în backend
+end note
+
+@enduml

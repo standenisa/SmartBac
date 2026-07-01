@@ -1,45 +1,212 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  StyleSheet,
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator
+  StyleSheet, View, Text, TextInput, TouchableOpacity,
+  ScrollView, KeyboardAvoidingView, Platform, Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withDelay, withSequence, FadeInDown, type SharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { apiPost } from '@/services/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { DUO } from '@/constants/duo';
+import { TYPO } from '@/constants/typography';
+import AnimatedPressable from '@/components/AnimatedPressable';
+import StructuredSolutionView, { StructuredSolution, MathFormula, MistakesCard } from '@/components/SolutionView';
+import MathText from '@/components/MathText';
+
+interface ConceptData {
+  concept?: string;
+  ce_este?: string;
+  analogie?: string;
+  formula?: string;
+  reguli?: string[];
+  exemple?: { problema: string; rezolvare: string; explicatie?: string }[];
+  greseli_frecvente?: string[];
+}
+
+interface ChatAPIResponse {
+  response: string;
+  structured?: StructuredSolution | null;
+  concept?: ConceptData | null;
+  latex?: string | null;
+  model_used: string;
+  suggestions: string[];
+}
 
 interface Message {
   id: string;
   text: string;
   isUser: boolean;
   timestamp: Date;
+  structured?: StructuredSolution | null;
+  concept?: ConceptData | null;
 }
 
-const QUICK_QUESTIONS = [
-  'Cum rezolv ecuații de gradul 2?',
-  'Explică-mi derivatele',
-  'Ce sunt limitele?',
-  'Cum calculez integrale?',
-  'Teorema lui Pitagora',
-  'Matrici și determinanți',
+// ── Typing Indicator ──
+
+function TypingDots() {
+  const dot1 = useSharedValue(0);
+  const dot2 = useSharedValue(0);
+  const dot3 = useSharedValue(0);
+
+  useEffect(() => {
+    const bounce = (sv: SharedValue<number>, delay: number) => {
+      sv.value = withDelay(delay, withRepeat(
+        withSequence(
+          withTiming(-6, { duration: 300 }),
+          withTiming(0, { duration: 300 }),
+        ),
+        -1,
+        false,
+      ));
+    };
+    bounce(dot1, 0);
+    bounce(dot2, 150);
+    bounce(dot3, 300);
+  }, []);
+
+  const style1 = useAnimatedStyle(() => ({ transform: [{ translateY: dot1.value }] }));
+  const style2 = useAnimatedStyle(() => ({ transform: [{ translateY: dot2.value }] }));
+  const style3 = useAnimatedStyle(() => ({ transform: [{ translateY: dot3.value }] }));
+
+  return (
+    <View style={styles.typingRow}>
+      {[style1, style2, style3].map((s, i) => (
+        <Animated.View key={i} style={[styles.typingDot, s]} />
+      ))}
+    </View>
+  );
+}
+
+// ── Initial suggestions ──
+
+const INITIAL_SUGGESTIONS = [
+  'Rezolva: 2x + 3 = 7',
+  'Ce e derivata?',
+  'Calculeaza det [[3,1],[2,4]]',
+  'C(10,3) = ?',
+  'Reguli integrale',
+  'Formule trigonometrie',
 ];
 
+// ── Formatted AI Message Components ──
+
+function ConceptSection({
+  icon, label, color, children,
+}: { icon: keyof typeof Ionicons.glyphMap; label: string; color: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.conceptSection}>
+      <View style={styles.conceptHeader}>
+        <View style={[styles.conceptIconWrap, { backgroundColor: color + '20' }]}>
+          <Ionicons name={icon} size={13} color={color} />
+        </View>
+        <Text style={[styles.conceptLabel, { color }]}>{label}</Text>
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function ConceptCard({ concept }: { concept: ConceptData }) {
+  return (
+    <View style={styles.conceptContainer}>
+      {concept.concept && (
+        <LinearGradient
+          colors={[DUO.purpleDark, DUO.blueDark]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.conceptTitleBadge}
+        >
+          <Ionicons name="book" size={13} color={DUO.white} />
+          <Text style={styles.conceptTitle}>{concept.concept}</Text>
+        </LinearGradient>
+      )}
+      {concept.ce_este && (
+        <ConceptSection icon="information-circle" label="CE ESTE" color={DUO.cyan}>
+          <MathText text={concept.ce_este} style={styles.conceptText} />
+        </ConceptSection>
+      )}
+      {concept.analogie && (
+        <ConceptSection icon="bulb" label="ANALOGIE" color={DUO.yellow}>
+          <View style={styles.analogyCard}>
+            <MathText text={concept.analogie} style={styles.conceptText} />
+          </View>
+        </ConceptSection>
+      )}
+      {concept.formula && (
+        <ConceptSection icon="calculator" label="FORMULĂ" color={DUO.blue}>
+          <MathFormula text={concept.formula} />
+        </ConceptSection>
+      )}
+      {concept.reguli && concept.reguli.length > 0 && (
+        <ConceptSection icon="list" label="REGULI" color={DUO.green}>
+          {concept.reguli.map((r, i) => (
+            <View key={i} style={styles.ruleRow}>
+              <View style={styles.ruleDot} />
+              <MathText text={r} style={styles.ruleText} />
+            </View>
+          ))}
+        </ConceptSection>
+      )}
+      {concept.exemple && concept.exemple.length > 0 && (
+        <ConceptSection icon="school" label="EXEMPLE" color={DUO.pink}>
+          {concept.exemple.slice(0, 3).map((ex, i) => (
+            <View key={i} style={styles.exampleItem}>
+              <View style={styles.exampleBadge}>
+                <Text style={styles.exampleBadgeText}>{i + 1}</Text>
+              </View>
+              <View style={styles.exampleBody}>
+                <MathText text={ex.problema} style={styles.exampleProblem} />
+                <MathFormula text={ex.rezolvare} />
+                {ex.explicatie && (
+                  <Text style={styles.exampleExplanation}>{ex.explicatie}</Text>
+                )}
+              </View>
+            </View>
+          ))}
+        </ConceptSection>
+      )}
+      {concept.greseli_frecvente && concept.greseli_frecvente.length > 0 && (
+        <MistakesCard mistakes={concept.greseli_frecvente} />
+      )}
+    </View>
+  );
+}
+
+function AIMessageContent({ message }: { message: Message }) {
+  // If we have structured data, render rich UI
+  if (message.structured && message.structured.tip && message.structured.tip !== 'Nerecunoscut') {
+    return <StructuredSolutionView sol={message.structured} />;
+  }
+  if (message.concept && message.concept.concept) {
+    return <ConceptCard concept={message.concept} />;
+  }
+  // Plain text fallback
+  return <MathText text={message.text} style={styles.aiText} />;
+}
+
+// ── Main Screen ──
+
 export default function ChatScreen() {
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      text: 'Salut! Sunt asistentul tău pentru BAC la matematică. Pune-mi orice întrebare despre teorie, formule sau exerciții!',
+      text: 'Salut! Sunt tutorul tau de matematica pentru BAC.\n\nPot sa te ajut cu:\n  Rezolvarea exercitiilor pas cu pas\n  Explicatii concepte (derivate, integrale, limite...)\n  Analiza greselilor tale\n  Formule si reguli\n\nScrie un exercitiu sau o intrebare!',
       isUser: false,
       timestamp: new Date(),
-    }
+    },
   ]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [activeSuggestions, setActiveSuggestions] = useState<string[]>(INITIAL_SUGGESTIONS);
   const scrollViewRef = useRef<ScrollView>(null);
+
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+  }, []);
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || isLoading) return;
@@ -50,48 +217,39 @@ export default function ChatScreen() {
       isUser: true,
       timestamp: new Date(),
     };
-
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setIsLoading(true);
+    setActiveSuggestions([]);
+    scrollToBottom();
 
     try {
-      const response = await fetch('http://localhost:5000/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message: text.trim() }),
+      const data = await apiPost<ChatAPIResponse>('/api/chat', {
+        message: text.trim(),
+        user_id: user?.id,
       });
-
-      const data = await response.json();
 
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: data.response || 'Îmi pare rău, nu am putut procesa întrebarea.',
+        text: data.response || 'Nu am putut procesa intrebarea.',
         isUser: false,
         timestamp: new Date(),
+        structured: data.structured,
+        concept: data.concept,
       };
-
       setMessages(prev => [...prev, aiMessage]);
-    } catch (error) {
-      const errorMessage: Message = {
+      setActiveSuggestions(data.suggestions || []);
+    } catch {
+      setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
-        text: 'Eroare de conexiune. Verifică dacă backend-ul rulează.',
+        text: 'Eroare de conexiune. Verifica daca backend-ul ruleaza.',
         isUser: false,
         timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      }]);
+      setActiveSuggestions([]);
     }
-
     setIsLoading(false);
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-  };
-
-  const handleQuickQuestion = (question: string) => {
-    sendMessage(question);
+    scrollToBottom();
   };
 
   return (
@@ -101,89 +259,106 @@ export default function ChatScreen() {
       keyboardVerticalOffset={90}
     >
       {/* Header */}
-      <LinearGradient
-        colors={['#10b981', '#059669']}
-        style={styles.header}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        <Text style={styles.headerTitle}>Asistent AI</Text>
-        <Text style={styles.headerSubtitle}>Întreabă orice despre matematică</Text>
-      </LinearGradient>
-
-      {/* Quick Questions */}
-      {messages.length <= 1 && (
-        <View style={styles.quickSection}>
-          <Text style={styles.quickTitle}>Întrebări rapide:</Text>
-          <View style={styles.quickContainer}>
-            {QUICK_QUESTIONS.map((question, index) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.quickChip}
-                onPress={() => handleQuickQuestion(question)}
-              >
-                <Text style={styles.quickChipText}>{question}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+      <LinearGradient colors={[DUO.card, DUO.bg]} style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.avatarRing}>
+          <Image source={require('@/assets/images/hero-brain.jpeg')} style={styles.headerBrainImg} />
+          <View style={styles.onlineDot} />
         </View>
-      )}
+        <View>
+          <Text style={[styles.headerTitle, TYPO.heading3]}>SmartBAC Tutor</Text>
+          <Text style={[styles.headerSubtitle, TYPO.label]}>Rezolv exercitii pas cu pas</Text>
+        </View>
+      </LinearGradient>
 
       {/* Messages */}
       <ScrollView
         ref={scrollViewRef}
         style={styles.messagesContainer}
         contentContainerStyle={styles.messagesContent}
-        onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+        onContentSizeChange={scrollToBottom}
+        keyboardShouldPersistTaps="handled"
       >
-        {messages.map((message) => (
-          <View
-            key={message.id}
-            style={[
-              styles.messageBubble,
-              message.isUser ? styles.userBubble : styles.aiBubble
-            ]}
+        {messages.map((msg) => (
+          <Animated.View
+            key={msg.id}
+            entering={FadeInDown.duration(260).springify().damping(16)}
+            style={[styles.messageBubble, msg.isUser ? styles.userBubble : styles.aiBubble]}
           >
-            {!message.isUser && (
-              <View style={styles.aiAvatar}>
-                <Text style={styles.aiAvatarText}>AI</Text>
+            {!msg.isUser && (
+              <LinearGradient
+                colors={[DUO.purpleDark, DUO.blueDark]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.aiAvatar}
+              >
+                <Image source={require('@/assets/images/hero-brain.jpeg')} style={styles.aiAvatarImg} />
+              </LinearGradient>
+            )}
+            {msg.isUser ? (
+              <LinearGradient
+                colors={[DUO.green, DUO.greenDark]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.messageContent, styles.userContent]}
+              >
+                <Text style={styles.userText}>{msg.text}</Text>
+              </LinearGradient>
+            ) : (
+              <View style={[styles.messageContent, styles.aiContent]}>
+                <AIMessageContent message={msg} />
               </View>
             )}
-            <View style={[
-              styles.messageContent,
-              message.isUser ? styles.userContent : styles.aiContent
-            ]}>
-              <Text style={[
-                styles.messageText,
-                message.isUser ? styles.userText : styles.aiText
-              ]}>
-                {message.text}
-              </Text>
-            </View>
-          </View>
+          </Animated.View>
         ))}
 
         {isLoading && (
-          <View style={[styles.messageBubble, styles.aiBubble]}>
-            <View style={styles.aiAvatar}>
-              <Text style={styles.aiAvatarText}>AI</Text>
-            </View>
+          <Animated.View
+            entering={FadeInDown.duration(200)}
+            style={[styles.messageBubble, styles.aiBubble]}
+          >
+            <LinearGradient
+              colors={[DUO.purpleDark, DUO.blueDark]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.aiAvatar}
+            >
+              <Image source={require('@/assets/images/hero-brain.jpeg')} style={styles.aiAvatarImg} />
+            </LinearGradient>
             <View style={[styles.messageContent, styles.aiContent]}>
-              <ActivityIndicator size="small" color="#10b981" />
-              <Text style={styles.typingText}>Se gândește...</Text>
+              <TypingDots />
             </View>
-          </View>
+          </Animated.View>
         )}
       </ScrollView>
 
+      {/* Contextual Quick Buttons */}
+      {activeSuggestions.length > 0 && !isLoading && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.suggestionsBar}
+          contentContainerStyle={styles.suggestionsContent}
+        >
+          {activeSuggestions.map((s, i) => (
+            <AnimatedPressable
+              key={i}
+              style={styles.suggestionChip}
+              onPress={() => sendMessage(s)}
+            >
+              <Text style={styles.suggestionText}>{s}</Text>
+            </AnimatedPressable>
+          ))}
+        </ScrollView>
+      )}
+
       {/* Input */}
-      <View style={styles.inputContainer}>
+      <View style={[styles.inputContainer, { paddingBottom: insets.bottom + 8 }]}>
         <TextInput
           style={styles.input}
           value={inputText}
           onChangeText={setInputText}
-          placeholder="Scrie întrebarea ta..."
-          placeholderTextColor="#9ca3af"
+          placeholder="Scrie exercitiul sau intrebarea..."
+          placeholderTextColor={DUO.textMuted}
           multiline
           maxLength={500}
           onSubmitEditing={() => sendMessage(inputText)}
@@ -193,168 +368,160 @@ export default function ChatScreen() {
           onPress={() => sendMessage(inputText)}
           disabled={!inputText.trim() || isLoading}
         >
-          <LinearGradient
-            colors={inputText.trim() && !isLoading ? ['#10b981', '#059669'] : ['#d1d5db', '#9ca3af']}
-            style={styles.sendButtonGradient}
-          >
-            <Text style={styles.sendButtonText}>→</Text>
-          </LinearGradient>
+          <Text style={styles.sendButtonText}>↑</Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
+// ── Styles ──
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f7fa',
-  },
+  container: { flex: 1, backgroundColor: DUO.bg },
+
+  // Header
   header: {
-    paddingTop: 60,
-    paddingBottom: 20,
-    paddingHorizontal: 24,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+    flexDirection: 'row', alignItems: 'center',
+    paddingBottom: 14, paddingHorizontal: 20, gap: 12,
+    borderBottomWidth: 1, borderBottomColor: DUO.surface,
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: 'white',
-    marginBottom: 4,
+  avatarRing: {
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: DUO.card, justifyContent: 'center', alignItems: 'center',
+    borderWidth: 2, borderColor: DUO.purple + '40',
+    overflow: 'hidden',
   },
-  headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.9)',
+  headerBrainImg: { width: 34, height: 34 },
+  onlineDot: {
+    position: 'absolute', bottom: -1, right: -1,
+    width: 14, height: 14, borderRadius: 7,
+    backgroundColor: DUO.green,
+    borderWidth: 2, borderColor: DUO.card,
   },
-  quickSection: {
-    padding: 16,
-  },
-  quickTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6b7280',
-    marginBottom: 12,
-  },
-  quickContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  quickChip: {
-    backgroundColor: 'white',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  quickChipText: {
-    fontSize: 13,
-    color: '#374151',
-  },
-  messagesContainer: {
-    flex: 1,
-  },
-  messagesContent: {
-    padding: 16,
-    paddingBottom: 20,
-  },
-  messageBubble: {
-    flexDirection: 'row',
-    marginBottom: 16,
-    alignItems: 'flex-start',
-  },
-  userBubble: {
-    justifyContent: 'flex-end',
-  },
-  aiBubble: {
-    justifyContent: 'flex-start',
-  },
+  headerTitle: { color: DUO.textPrimary },
+  headerSubtitle: { color: DUO.textSecondary },
+
+  // Messages
+  messagesContainer: { flex: 1 },
+  messagesContent: { padding: 16, paddingBottom: 8 },
+  messageBubble: { flexDirection: 'row', marginBottom: 14, alignItems: 'flex-start' },
+  userBubble: { justifyContent: 'flex-end' },
+  aiBubble: { justifyContent: 'flex-start' },
   aiAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#10b981',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
+    width: 36, height: 36, borderRadius: 18,
+    justifyContent: 'center', alignItems: 'center',
+    marginRight: 10, marginTop: 2,
+    shadowColor: DUO.purple, shadowOpacity: 0.4,
+    shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 4,
   },
-  aiAvatarText: {
-    color: 'white',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  messageContent: {
-    maxWidth: '75%',
-    padding: 14,
-    borderRadius: 18,
-  },
+  aiAvatarImg: { width: 24, height: 24, borderRadius: 4 },
+  messageContent: { maxWidth: '86%', padding: 14, borderRadius: 18 },
   userContent: {
-    backgroundColor: '#10b981',
-    borderBottomRightRadius: 4,
-    marginLeft: 'auto',
+    borderBottomRightRadius: 4, marginLeft: 'auto',
+    shadowColor: DUO.green, shadowOpacity: 0.25,
+    shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 3,
   },
   aiContent: {
-    backgroundColor: 'white',
-    borderBottomLeftRadius: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
+    backgroundColor: DUO.card, borderBottomLeftRadius: 4,
+    borderWidth: 1, borderColor: DUO.surface,
   },
-  messageText: {
-    fontSize: 15,
-    lineHeight: 22,
+  userText: { fontSize: 15, lineHeight: 22, fontWeight: '600', color: DUO.white },
+  aiText: { fontSize: 15, lineHeight: 22, fontWeight: '600', color: DUO.textPrimary },
+
+  // Typing indicator
+  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 4, paddingHorizontal: 4 },
+  typingDot: {
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: DUO.textMuted,
   },
-  userText: {
-    color: 'white',
+
+  // Suggestions bar
+  suggestionsBar: {
+    maxHeight: 50, borderTopWidth: 1, borderTopColor: DUO.surface,
+    backgroundColor: DUO.bg,
   },
-  aiText: {
-    color: '#1f2937',
+  suggestionsContent: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
+  suggestionChip: {
+    backgroundColor: DUO.blue + '15', paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 999, borderWidth: 1, borderColor: DUO.blue + '60',
+    marginRight: 8,
   },
-  typingText: {
-    fontSize: 13,
-    color: '#6b7280',
-    marginLeft: 8,
-  },
+  suggestionText: { fontSize: 13, color: DUO.blue, fontWeight: '700' },
+
+  // Input
   inputContainer: {
-    flexDirection: 'row',
-    padding: 16,
-    paddingBottom: 32,
-    backgroundColor: 'white',
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
+    flexDirection: 'row', padding: 12, paddingHorizontal: 16,
+    backgroundColor: DUO.card, borderTopWidth: 1, borderTopColor: DUO.surface,
     alignItems: 'flex-end',
   },
   input: {
-    flex: 1,
-    backgroundColor: '#f3f4f6',
-    borderRadius: 24,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    fontSize: 15,
-    maxHeight: 100,
-    color: '#1f2937',
+    flex: 1, backgroundColor: DUO.surface, borderRadius: 999,
+    paddingHorizontal: 20, paddingVertical: 12,
+    fontSize: 15, maxHeight: 100, color: DUO.textPrimary,
+    borderWidth: 1, borderColor: DUO.surfaceLight, fontWeight: '600',
   },
   sendButton: {
-    marginLeft: 12,
-    borderRadius: 24,
-    overflow: 'hidden',
+    marginLeft: 10, width: 46, height: 46, borderRadius: 23,
+    backgroundColor: DUO.green, justifyContent: 'center', alignItems: 'center',
+    borderBottomWidth: 3, borderBottomColor: DUO.greenDark,
   },
   sendButtonDisabled: {
-    opacity: 0.7,
+    backgroundColor: DUO.surface, borderBottomColor: DUO.cardDark,
   },
-  sendButtonGradient: {
-    width: 48,
-    height: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
+  sendButtonText: { fontSize: 22, color: DUO.white, fontWeight: '800' },
+
+  // ── Concept Styles ──
+  conceptContainer: { gap: 12 },
+  conceptTitleBadge: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: 999,
   },
-  sendButtonText: {
-    fontSize: 24,
-    color: 'white',
-    fontWeight: '600',
+  conceptTitle: {
+    fontSize: 13, fontWeight: '800', color: DUO.white,
+    letterSpacing: 0.3,
+  },
+  conceptSection: { gap: 6 },
+  conceptHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2,
+  },
+  conceptIconWrap: {
+    width: 22, height: 22, borderRadius: 6,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  conceptLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  conceptText: { fontSize: 14, fontWeight: '500', color: DUO.textPrimary, lineHeight: 21 },
+  analogyCard: {
+    backgroundColor: DUO.yellow + '0E',
+    borderLeftWidth: 3, borderLeftColor: DUO.yellow,
+    paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10,
+  },
+  ruleRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingLeft: 2,
+    marginBottom: 4,
+  },
+  ruleDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: DUO.green, marginTop: 7,
+  },
+  ruleText: { flex: 1, fontSize: 13, fontWeight: '500', color: DUO.textPrimary, lineHeight: 20 },
+  exampleItem: {
+    flexDirection: 'row', gap: 10, marginBottom: 10,
+  },
+  exampleBadge: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: DUO.pink + '30',
+    borderWidth: 1, borderColor: DUO.pink + '60',
+    justifyContent: 'center', alignItems: 'center',
+    marginTop: 1,
+  },
+  exampleBadgeText: { fontSize: 11, fontWeight: '800', color: DUO.pink },
+  exampleBody: { flex: 1, gap: 4 },
+  exampleProblem: { fontSize: 13, fontWeight: '700', color: DUO.textPrimary },
+  exampleExplanation: {
+    fontSize: 12, fontWeight: '500', color: DUO.textSecondary,
+    fontStyle: 'italic', marginTop: 2,
   },
 });

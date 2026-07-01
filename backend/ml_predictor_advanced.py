@@ -9,10 +9,8 @@ Advanced ML Predictor pentru BAC Prep AI
 import json
 import pickle
 import numpy as np
-from datetime import datetime
 from collections import defaultdict
 import warnings
-warnings.filterwarnings('ignore')
 
 # Sklearn imports
 from sklearn.ensemble import (
@@ -22,12 +20,10 @@ from sklearn.ensemble import (
     StackingRegressor
 )
 from sklearn.neural_network import MLPRegressor
-from sklearn.linear_model import Ridge, ElasticNet
-from sklearn.svm import SVR
+from sklearn.linear_model import Ridge
 from sklearn.model_selection import (
     train_test_split,
     cross_val_score,
-    GridSearchCV,
     KFold
 )
 from sklearn.preprocessing import StandardScaler
@@ -38,19 +34,33 @@ from sklearn.metrics import (
 )
 import os
 
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Try to import XGBoost (optional)
 try:
     from xgboost import XGBRegressor
     XGBOOST_AVAILABLE = True
-except (ImportError, OSError, Exception) as e:
+except Exception as e:
     XGBOOST_AVAILABLE = False
-    print(f"⚠️ XGBoost nu este disponibil: {e}. Folosind alternativă.")
+    print(f"XGBoost nu este disponibil: {e}. Folosind alternativă.")
 
 
 class AdvancedGradePredictor:
     """
     Predictor avansat cu multiple modele și ensemble learning
     """
+
+    FEATURE_NAMES = [
+        'total_attempts', 'overall_accuracy',
+        'subject1_acc', 'subject2_acc', 'subject3_acc',
+        'avg_difficulty', 'avg_time',
+        'learning_trend', 'consistency',
+        'easy_acc', 'medium_acc', 'hard_acc', 'expert_acc',
+        'time_efficiency', 'topic_diversity',
+        'avg_topic_mastery', 'topic_mastery_variance',
+        'streak_ratio', 'max_streak', 'recent_accuracy',
+        'difficulty_progression', 'avg_correct_time'
+    ]
 
     def __init__(self, model_type='ensemble'):
         """
@@ -66,7 +76,6 @@ class AdvancedGradePredictor:
         self.training_metrics = {}
         self.feature_importances = {}
 
-        # Inițializează modelele
         self._init_models()
 
     def _init_models(self):
@@ -123,8 +132,14 @@ class AdvancedGradePredictor:
         # Ridge Regression (pentru stacking)
         self.ridge_model = Ridge(alpha=1.0)
 
-        # SVR
-        self.svr_model = SVR(kernel='rbf', C=1.0, epsilon=0.1)
+    @staticmethod
+    def _group_by_subject(attempts):
+        """Grupează rezultatele (is_correct) pe subiecte 1-3."""
+        subjects = {1: [], 2: [], 3: []}
+        for attempt in attempts:
+            subject = attempt.get('exercise_subject', 1)
+            subjects[subject].append(attempt['is_correct'])
+        return subjects
 
     def extract_advanced_features(self, attempts):
         """
@@ -134,18 +149,15 @@ class AdvancedGradePredictor:
             numpy array cu 20+ features
         """
         if not attempts:
-            return np.zeros(22)
+            return np.zeros(len(self.FEATURE_NAMES))
 
         # === FEATURES DE BAZĂ (7) ===
         total_attempts = len(attempts)
         correct = sum(1 for a in attempts if a['is_correct'])
-        overall_accuracy = correct / total_attempts if total_attempts > 0 else 0
+        overall_accuracy = correct / total_attempts
 
         # Acuratețe pe subiecte
-        subjects = {1: [], 2: [], 3: []}
-        for attempt in attempts:
-            subject = attempt.get('exercise_subject', 1)
-            subjects[subject].append(attempt['is_correct'])
+        subjects = self._group_by_subject(attempts)
 
         subject1_acc = np.mean(subjects[1]) if subjects[1] else 0
         subject2_acc = np.mean(subjects[2]) if subjects[2] else 0
@@ -222,7 +234,7 @@ class AdvancedGradePredictor:
             else:
                 current_streak = 0
 
-        streak_ratio = max_streak / total_attempts if total_attempts > 0 else 0
+        streak_ratio = max_streak / total_attempts
 
         # 7. Recent performance (ultimele 10 exerciții)
         recent_attempts = attempts[-10:] if len(attempts) >= 10 else attempts
@@ -236,7 +248,6 @@ class AdvancedGradePredictor:
         else:
             difficulty_progression = 0
 
-        # Compilare features
         features = [
             # Bază (7)
             total_attempts,
@@ -264,41 +275,18 @@ class AdvancedGradePredictor:
             avg_correct_time
         ]
 
-        self.feature_names = [
-            'total_attempts', 'overall_accuracy',
-            'subject1_acc', 'subject2_acc', 'subject3_acc',
-            'avg_difficulty', 'avg_time',
-            'learning_trend', 'consistency',
-            'easy_acc', 'medium_acc', 'hard_acc', 'expert_acc',
-            'time_efficiency', 'topic_diversity',
-            'avg_topic_mastery', 'topic_mastery_variance',
-            'streak_ratio', 'max_streak', 'recent_accuracy',
-            'difficulty_progression', 'avg_correct_time'
-        ]
+        self.feature_names = list(self.FEATURE_NAMES)
 
         return np.array(features)
 
     def load_training_data(self):
         """Încarcă și procesează datele de antrenare"""
-        print("📂 Încărcare date de antrenare...")
+        print("Încărcare date de antrenare...")
 
-        # Caută fișierele în locații posibile
-        data_paths = [
-            'backend/data/synthetic_attempts.json',
-            'data/synthetic_attempts.json',
-            '../data/synthetic_attempts.json'
-        ]
+        attempts_path = os.path.join(_BASE_DIR, 'data', 'synthetic_attempts.json')
+        grades_path = os.path.join(_BASE_DIR, 'data', 'student_grades.json')
 
-        attempts_path = None
-        grades_path = None
-
-        for path in data_paths:
-            if os.path.exists(path):
-                attempts_path = path
-                grades_path = path.replace('synthetic_attempts', 'student_grades')
-                break
-
-        if not attempts_path:
+        if not os.path.exists(attempts_path):
             raise FileNotFoundError("Nu găsesc fișierele de date!")
 
         with open(attempts_path, 'r', encoding='utf-8') as f:
@@ -326,13 +314,23 @@ class AdvancedGradePredictor:
                 X.append(features)
                 y.append(grade)
 
-        print(f"   ✓ {len(X)} studenți încărcați cu {len(self.feature_names)} features")
+        print(f"   {len(X)} studenți încărcați cu {len(self.feature_names)} features")
 
         return np.array(X), np.array(y)
 
+    def _cross_validate(self, model, X, y):
+        """Cross-validation 5-fold; returnează (r2_mean, r2_std, rmse_mean, rmse_std)."""
+        kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+        cv_scores = cross_val_score(model, X, y, cv=kfold, scoring='r2')
+        cv_rmse = cross_val_score(
+            model, X, y, cv=kfold,
+            scoring='neg_root_mean_squared_error'
+        )
+        return cv_scores.mean(), cv_scores.std(), -cv_rmse.mean(), cv_rmse.std()
+
     def train(self, X=None, y=None):
         """Antrenează modelul selectat cu cross-validation"""
-        print(f"\n🤖 Antrenare model: {self.model_type.upper()}")
+        print(f"\nAntrenare model: {self.model_type.upper()}")
 
         # Încarcă date dacă nu sunt furnizate
         if X is None or y is None:
@@ -346,10 +344,7 @@ class AdvancedGradePredictor:
             X_scaled, y, test_size=0.2, random_state=42
         )
 
-        print(f"   📊 Train: {len(X_train)} | Test: {len(X_test)}")
-
-        # Cross-validation pentru evaluare
-        kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+        print(f"   Train: {len(X_train)} | Test: {len(X_test)}")
 
         # Selectează și antrenează modelul
         if self.model_type == 'random_forest':
@@ -362,7 +357,7 @@ class AdvancedGradePredictor:
             if XGBOOST_AVAILABLE:
                 self.model = self.xgb_model
             else:
-                print("   ⚠️ XGBoost indisponibil, folosesc Gradient Boosting")
+                print("   XGBoost indisponibil, folosesc Gradient Boosting")
                 self.model = self.gb_model
 
         elif self.model_type == 'neural_network':
@@ -398,7 +393,7 @@ class AdvancedGradePredictor:
             self.model = self.rf_model
 
         # Antrenare
-        print("   🔄 Antrenare în curs...")
+        print("   Antrenare în curs...")
         self.model.fit(X_train, y_train)
 
         # Evaluare pe test set
@@ -410,30 +405,26 @@ class AdvancedGradePredictor:
         r2 = r2_score(y_test, y_pred)
 
         # Cross-validation scores
-        cv_scores = cross_val_score(self.model, X_scaled, y, cv=kfold, scoring='r2')
-        cv_rmse = cross_val_score(
-            self.model, X_scaled, y, cv=kfold,
-            scoring='neg_root_mean_squared_error'
-        )
+        cv_r2_mean, cv_r2_std, cv_rmse_mean, cv_rmse_std = self._cross_validate(self.model, X_scaled, y)
 
         self.training_metrics = {
             'rmse': rmse,
             'mae': mae,
             'r2': r2,
-            'cv_r2_mean': cv_scores.mean(),
-            'cv_r2_std': cv_scores.std(),
-            'cv_rmse_mean': -cv_rmse.mean(),
-            'cv_rmse_std': cv_rmse.std()
+            'cv_r2_mean': cv_r2_mean,
+            'cv_r2_std': cv_r2_std,
+            'cv_rmse_mean': cv_rmse_mean,
+            'cv_rmse_std': cv_rmse_std
         }
 
-        print(f"\n   ✅ Model antrenat!")
-        print(f"   📈 Metrici Test Set:")
+        print("\n   Model antrenat!")
+        print("   Metrici Test Set:")
         print(f"      RMSE: {rmse:.3f}")
         print(f"      MAE: {mae:.3f}")
         print(f"      R² Score: {r2:.3f}")
-        print(f"\n   📊 Cross-Validation (5-fold):")
-        print(f"      R² Mean: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
-        print(f"      RMSE Mean: {-cv_rmse.mean():.3f} ± {cv_rmse.std():.3f}")
+        print("\n   Cross-Validation (5-fold):")
+        print(f"      R² Mean: {cv_r2_mean:.3f} ± {cv_r2_std:.3f}")
+        print(f"      RMSE Mean: {cv_rmse_mean:.3f} ± {cv_rmse_std:.3f}")
 
         self.is_trained = True
 
@@ -446,7 +437,7 @@ class AdvancedGradePredictor:
         """Calculează importanța features"""
         if hasattr(self.model, 'feature_importances_'):
             importances = self.model.feature_importances_
-        elif hasattr(self.model, 'estimators_'):
+        elif hasattr(self.model, 'named_estimators_'):
             # Pentru ensemble, facem media
             all_importances = []
             for name, est in self.model.named_estimators_.items():
@@ -461,7 +452,7 @@ class AdvancedGradePredictor:
 
         self.feature_importances = dict(zip(self.feature_names, importances))
 
-        print(f"\n   🎯 Top 10 Feature Importance:")
+        print("\n   Top 10 Feature Importance:")
         sorted_features = sorted(
             self.feature_importances.items(),
             key=lambda x: x[1],
@@ -477,24 +468,22 @@ class AdvancedGradePredictor:
         if not self.is_trained:
             raise Exception("Modelul nu este antrenat!")
 
-        # Extrage features
         features = self.extract_advanced_features(student_attempts)
         features_scaled = self.scaler.transform([features])
 
-        # Predicție principală
         predicted_grade = self.model.predict(features_scaled)[0]
 
         # Calculează confidence interval bazat pe variance
         # Pentru ensemble, folosim variance între modele
         predictions_variance = 0.3  # Default
 
-        if hasattr(self.model, 'estimators_'):
+        if hasattr(self.model, 'named_estimators_'):
             individual_preds = []
             for name, est in self.model.named_estimators_.items():
                 try:
                     pred = est.predict(features_scaled)[0]
                     individual_preds.append(pred)
-                except:
+                except Exception:
                     pass
             if individual_preds:
                 predictions_variance = np.std(individual_preds)
@@ -503,10 +492,7 @@ class AdvancedGradePredictor:
         confidence_margin = max(0.3, min(1.0, predictions_variance * 1.96))
 
         # Subject breakdown
-        subjects = {1: [], 2: [], 3: []}
-        for attempt in student_attempts:
-            subject = attempt.get('exercise_subject', 1)
-            subjects[subject].append(attempt['is_correct'])
+        subjects = self._group_by_subject(student_attempts)
 
         subject_breakdown = {}
         for subject, results in subjects.items():
@@ -604,7 +590,7 @@ class AdvancedGradePredictor:
 
     def compare_models(self, X=None, y=None):
         """Compară toate modelele disponibile"""
-        print("\n🔬 Comparare modele ML...")
+        print("\nComparare modele ML...")
 
         if X is None or y is None:
             X, y = self.load_training_data()
@@ -621,33 +607,28 @@ class AdvancedGradePredictor:
             models['XGBoost'] = self.xgb_model
 
         results = {}
-        kfold = KFold(n_splits=5, shuffle=True, random_state=42)
 
         for name, model in models.items():
             print(f"\n   Testing {name}...")
-            cv_scores = cross_val_score(model, X_scaled, y, cv=kfold, scoring='r2')
-            cv_rmse = cross_val_score(
-                model, X_scaled, y, cv=kfold,
-                scoring='neg_root_mean_squared_error'
-            )
+            r2_mean, r2_std, rmse_mean, rmse_std = self._cross_validate(model, X_scaled, y)
 
             results[name] = {
-                'r2_mean': cv_scores.mean(),
-                'r2_std': cv_scores.std(),
-                'rmse_mean': -cv_rmse.mean(),
-                'rmse_std': cv_rmse.std()
+                'r2_mean': r2_mean,
+                'r2_std': r2_std,
+                'rmse_mean': rmse_mean,
+                'rmse_std': rmse_std
             }
 
-            print(f"      R²: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
-            print(f"      RMSE: {-cv_rmse.mean():.3f} ± {cv_rmse.std():.3f}")
+            print(f"      R²: {r2_mean:.3f} ± {r2_std:.3f}")
+            print(f"      RMSE: {rmse_mean:.3f} ± {rmse_std:.3f}")
 
         # Găsește cel mai bun model
         best_model = max(results.items(), key=lambda x: x[1]['r2_mean'])
-        print(f"\n   🏆 Cel mai bun model: {best_model[0]}")
+        print(f"\n   Cel mai bun model: {best_model[0]}")
 
         return results
 
-    def save(self, filepath='backend/models/grade_predictor_advanced.pkl'):
+    def save(self, filepath=os.path.join(_BASE_DIR, 'models', 'grade_predictor_advanced.pkl')):
         """Salvează modelul și scalerul"""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
@@ -663,9 +644,9 @@ class AdvancedGradePredictor:
         with open(filepath, 'wb') as f:
             pickle.dump(save_data, f)
 
-        print(f"\n💾 Model salvat în: {filepath}")
+        print(f"\nModel salvat în: {filepath}")
 
-    def load(self, filepath='backend/models/grade_predictor_advanced.pkl'):
+    def load(self, filepath=os.path.join(_BASE_DIR, 'models', 'grade_predictor_advanced.pkl')):
         """Încarcă model salvat"""
         with open(filepath, 'rb') as f:
             save_data = pickle.load(f)
@@ -678,7 +659,7 @@ class AdvancedGradePredictor:
         self.feature_importances = save_data.get('feature_importances', {})
         self.is_trained = True
 
-        print(f"📂 Model încărcat: {self.model_type}")
+        print(f"Model încărcat: {self.model_type}")
 
     def get_model_info(self):
         """Returnează informații despre model"""
@@ -696,41 +677,23 @@ class AdvancedGradePredictor:
         }
 
 
-# Pentru compatibilitate cu codul existent
-class GradePredictor(AdvancedGradePredictor):
-    """Alias pentru compatibilitate"""
-    def __init__(self):
-        super().__init__(model_type='ensemble')
-
-    def extract_features(self, attempts):
-        """Compatibilitate cu versiunea veche"""
-        features = self.extract_advanced_features(attempts)
-        return features[:7].tolist()  # Returnează doar primele 7 features
-
-
 if __name__ == '__main__':
-    print("=" * 60)
-    print("🤖 BAC Prep AI - Advanced ML Training")
-    print("=" * 60)
+    warnings.filterwarnings('ignore')
 
-    # Testează diferite modele
+    print("BAC Prep AI - Advanced ML Training")
+
     predictor = AdvancedGradePredictor(model_type='ensemble')
 
-    # Compară modele
     predictor.compare_models()
 
-    # Antrenează modelul ensemble
-    print("\n" + "=" * 60)
-    print("🏋️ Antrenare model ENSEMBLE final...")
-    print("=" * 60)
+    print("\nAntrenare model ENSEMBLE final...")
 
     predictor.train()
     predictor.save()
 
-    # Afișează info model
-    print("\n📋 Model Info:")
+    print("\nModel Info:")
     info = predictor.get_model_info()
     for key, value in info.items():
         print(f"   {key}: {value}")
 
-    print("\n🎉 Model avansat gata de folosit!")
+    print("\nModel avansat gata de folosit!")

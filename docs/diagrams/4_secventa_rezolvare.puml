@@ -1,0 +1,52 @@
+@startuml Secventa Rezolvare Exercitiu
+!theme plain
+skinparam backgroundColor white
+skinparam defaultFontSize 12
+
+title Diagrama de secvență — Rezolvarea unui exercițiu
+
+actor "Elev" as Student
+participant "Frontend\n(React Native)" as FE
+participant "Backend\n(FastAPI)" as BE
+database "MongoDB" as DB
+participant "MathTutor\n(Rule-Based)" as Solver
+participant "DeepSeek-R1\n+ QLoRA\n(Kaggle/Flask)" as LLM
+
+Student -> FE : Selectează Subiect (I/II/III)
+FE -> BE : GET /api/exercises?subject=1
+BE -> DB : find(subject: 1)
+DB --> BE : exerciții JSON
+BE --> FE : lista exerciții
+FE --> Student : Afișează exercițiu
+
+Student -> FE : Trimite răspuns
+FE -> BE : POST /api/exercises/submit-answer
+BE -> BE : _answers_match()\nnormalizare + comparare
+BE -> DB : insert attempt
+BE -> DB : update XP (+10)
+
+alt Răspuns CORECT
+    BE --> FE : {correct: true, xp: 10}
+    FE --> Student : "Corect! +XP"\n(confetti animation)
+else Răspuns GREȘIT
+    BE --> FE : {correct: false}
+    FE --> Student : "Încearcă din nou!"
+
+    Student -> FE : Cere rezolvare
+    FE -> BE : POST /api/solver/solve
+
+    BE -> Solver : Detectare tip exercițiu\n(regex)
+
+    alt MathTutor poate rezolva
+        Solver --> BE : Soluție pas cu pas\n(100% corect)
+    else MathTutor NU poate
+        BE -> LLM : POST /ask (Flask+ngrok)
+        LLM -> LLM : <think>\nRaționament pas cu pas\n</think>
+        LLM --> BE : Soluție + pași
+    end
+
+    BE --> FE : {solution, steps}
+    FE --> Student : Rezolvare pas cu pas
+end
+
+@enduml

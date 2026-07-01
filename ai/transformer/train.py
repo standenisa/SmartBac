@@ -17,9 +17,9 @@ Formatul secvenței de antrenament:
     întrebarea și generează răspunsul + pașii de rezolvare.
 
 Hiperparametri:
-    - Batch size: 8  (mic, avem doar ~242 exerciții)
-    - Max seq len: 256 (suficient pentru exerciții BAC)
-    - Epochs: 50
+    - Batch size: 16 (cu datele augmentate, ~2400 exerciții)
+    - Max seq len: 512 (suficient pentru soluții complete)
+    - Epochs: 100
     - Optimizer: AdamW (lr=3e-4, weight_decay=0.01)
     - Scheduler: Warmup liniar 10% din steps + cosine decay
     - Gradient clipping: max_norm=1.0
@@ -28,7 +28,6 @@ Hiperparametri:
 
 import json
 import math
-import os
 import sys
 import time
 from pathlib import Path
@@ -45,11 +44,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 from ai.tokenizer.bpe import MathBPETokenizer
 from ai.transformer.config import MathTransformerConfig
 from ai.transformer.model import MathTransformer
+from ai.transformer.generate import generate, pick_device
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# Dataset pentru next-token prediction
-# ═══════════════════════════════════════════════════════════════════════
 
 class MathDataset(Dataset):
     """
@@ -67,10 +63,9 @@ class MathDataset(Dataset):
         max_len:    Lungimea maximă a secvenței (se trunchiază dacă depășește).
     """
 
-    # ID-urile tokenilor speciali (din MathBPETokenizer.SPECIAL_TOKENS)
-    BOS_ID = 2   # <BOS> — Beginning Of Sequence
-    EOS_ID = 3   # <EOS> — End Of Sequence
-    SEP_ID = 4   # <SEP> — Separator între părțile secvenței
+    BOS_ID = MathBPETokenizer.SPECIAL_TOKENS["<BOS>"]
+    EOS_ID = MathBPETokenizer.SPECIAL_TOKENS["<EOS>"]
+    SEP_ID = MathBPETokenizer.SPECIAL_TOKENS["<SEP>"]
 
     def __init__(self, data_path: str, tokenizer: MathBPETokenizer, max_len: int = 256):
         super().__init__()
@@ -103,7 +98,7 @@ class MathDataset(Dataset):
         """
         question = item.get("question", "")
         answer = str(item.get("answer", ""))
-        steps = item.get("steps", [])
+        steps = item.get("steps", item.get("solution_steps", []))
 
         # Tokenizăm fiecare parte separat
         question_ids = self.tokenizer.encode(question)
@@ -137,60 +132,18 @@ class MathDataset(Dataset):
         return torch.tensor(self.sequences[idx], dtype=torch.long)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Collate function: padding dinamic la lungimea maximă din batch
-# ═══════════════════════════════════════════════════════════════════════
-
 def collate_fn(batch: list[torch.Tensor], pad_idx: int = 0) -> torch.Tensor:
-    """
-    Padding dinamic: toate secvențele din batch devin egale ca lungime.
-
-    Secvențele mai scurte sunt completate cu <PAD> (index 0) la dreapta.
-    Acest lucru e necesar pentru a crea un tensor rectangular (batch, max_len).
-
-    Args:
-        batch:   Lista de tensori cu lungimi diferite.
-        pad_idx: Indexul tokenului de padding.
-
-    Returns:
-        Tensor de formă (batch_size, max_len_in_batch).
-    """
-    # nn.utils.rnn.pad_sequence adaugă padding automat
+    """Padding dinamic cu <PAD> la dreapta, până la lungimea maximă din batch."""
     return nn.utils.rnn.pad_sequence(batch, batch_first=True, padding_value=pad_idx)
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# Learning Rate Scheduler: Warmup liniar + Cosine Decay
-# ═══════════════════════════════════════════════════════════════════════
 
 class WarmupCosineScheduler:
     """
     Scheduler de learning rate cu warmup liniar urmat de cosine decay.
 
-    Faza 1 (warmup): LR crește liniar de la 0 la lr_max
-        - Durează warmup_steps pași
-        - Previne actualizări prea mari la început când greutățile sunt random
-
-    Faza 2 (cosine decay): LR scade gradual urmând o curbă cosinus
-        - De la lr_max la ~0
-        - Mai "blândă" decât decăderea exponențială
-        - Permite modelului să facă ajustări fine la final
-
-    Grafic:
-        LR │     ╱‾‾‾‾‾‾‾‾‾╲
-           │    ╱              ╲
-           │   ╱                 ╲
-           │  ╱                    ╲
-           │ ╱                       ╲
-           │╱                          ╲___
-           └─────────────────────────────── step
-           0   warmup     total_steps
-
-    Args:
-        optimizer:     Optimizer-ul PyTorch.
-        warmup_steps:  Numărul de pași de warmup.
-        total_steps:   Numărul total de pași de antrenament.
-        lr_max:        Learning rate-ul maxim (atins la sfârșitul warmup-ului).
+    Warmup-ul (LR crește liniar de la 0 la lr_max) previne actualizări prea
+    mari la început, când greutățile sunt random. Cosine decay scade apoi LR
+    gradual de la lr_max spre 0, permițând ajustări fine la final.
     """
 
     def __init__(self, optimizer, warmup_steps: int, total_steps: int, lr_max: float = 3e-4):
@@ -225,10 +178,6 @@ class WarmupCosineScheduler:
         """Returnează ultimul learning rate calculat."""
         return self._compute_lr()
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# Bucla de antrenament pentru o epocă
-# ═══════════════════════════════════════════════════════════════════════
 
 def train_epoch(
     model: MathTransformer,
@@ -266,40 +215,26 @@ def train_epoch(
     n_batches = 0
 
     for batch in dataloader:
-        # Mutăm batch-ul pe device (MPS/CPU)
         batch = batch.to(device)
 
-        # ── Teacher forcing ──
-        # Input: toate tokenurile MINUS ultimul (modelul prezice următorul)
+        # Teacher forcing: inputul e secvența fără ultimul token,
+        # iar labels e secvența fără primul (predicție de next-token)
         input_ids = batch[:, :-1]
-        # Labels: toate tokenurile MINUS primul (ce trebuie prezis)
         labels = batch[:, 1:]
 
-        # Resetăm gradienții din iterația anterioară
         optimizer.zero_grad()
-
-        # Forward pass: model(input) → logits (batch, seq_len-1, vocab_size)
         logits = model(input_ids)
 
-        # Aplatizăm pentru CrossEntropyLoss:
-        #   logits: (batch * seq_len, vocab_size)
-        #   labels: (batch * seq_len,)
+        # Aplatizăm pentru CrossEntropyLoss: (batch * seq_len, vocab_size)
         loss = criterion(
             logits.reshape(-1, logits.size(-1)),
             labels.reshape(-1),
         )
 
-        # Backward pass: calculează gradienții
         loss.backward()
-
-        # Gradient clipping: previne explodarea gradienților
-        # Normalizează gradienții dacă norma lor depășește grad_clip
         nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-
-        # Actualizează greutățile
         optimizer.step()
 
-        # Actualizează learning rate-ul
         if scheduler is not None:
             scheduler.step()
 
@@ -308,10 +243,6 @@ def train_epoch(
 
     return total_loss / max(n_batches, 1)
 
-
-# ═══════════════════════════════════════════════════════════════════════
-# Bucla de evaluare
-# ═══════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
 def evaluate_epoch(
@@ -353,10 +284,6 @@ def evaluate_epoch(
     return total_loss / max(n_batches, 1)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# Funcția principală de antrenament
-# ═══════════════════════════════════════════════════════════════════════
-
 def main():
     """
     Rutina principală de antrenament.
@@ -366,7 +293,7 @@ def main():
         2. Încarcă tokenizer-ul BPE antrenat
         3. Încarcă datele din JSON și creează dataset-ul
         4. Configurează modelul, optimizer-ul și scheduler-ul
-        5. Antrenează 50 de epoci cu salvare automată a celui mai bun model
+        5. Antrenează 100 de epoci cu salvare automată a celui mai bun model
         6. Generează un exemplu demonstrativ la final
     """
     print("=" * 65)
@@ -375,7 +302,24 @@ def main():
 
     # ── Căi fișiere ──
     project_root = _PROJECT_ROOT
-    data_path = project_root / "data" / "raw" / "exercises_bac.json"
+    # Folosim exercises_merged.json (2408 exerciții complete)
+    merged_path = project_root / "data" / "processed" / "exercises_merged.json"
+    # Fallback: split-uri pre-generate sau datele vechi
+    splits_dir = project_root / "data" / "splits" / "transformer"
+    train_path = splits_dir / "train.json"
+    val_path = splits_dir / "val.json"
+    test_path = splits_dir / "test.json"
+    augmented_path = project_root / "data" / "augmented" / "exercises_augmented.json"
+    raw_path = project_root / "data" / "raw" / "exercises_bac.json"
+    # Prioritate: merged > presplit > augmented > raw
+    if merged_path.exists():
+        use_presplit = False
+        data_path = merged_path
+    elif train_path.exists():
+        use_presplit = True
+    else:
+        use_presplit = False
+        data_path = augmented_path if augmented_path.exists() else raw_path
     tokenizer_path = project_root / "ai" / "tokenizer" / "math_bpe.json"
     checkpoint_dir = project_root / "ai" / "transformer" / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -383,15 +327,13 @@ def main():
     history_path = checkpoint_dir / "training_history.json"
 
     # ── Device ──
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-        print(f"[DEVICE] MPS (Apple Silicon GPU)")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
+    device = pick_device()
+    if device.type == "mps":
+        print("[DEVICE] MPS (Apple Silicon GPU)")
+    elif device.type == "cuda":
         print(f"[DEVICE] CUDA ({torch.cuda.get_device_name(0)})")
     else:
-        device = torch.device("cpu")
-        print(f"[DEVICE] CPU")
+        print("[DEVICE] CPU")
 
     # ── Încarcă tokenizer-ul ──
     if not tokenizer_path.exists():
@@ -405,49 +347,64 @@ def main():
     print(f"[TOKENIZER] Încărcat: {vocab_size} tokeni din {tokenizer_path}")
 
     # ── Verifică datele ──
-    if not data_path.exists():
-        print(f"[EROARE] Datele nu au fost găsite la: {data_path}")
-        print("  Rulează mai întâi: python scripts/collect_data.py")
-        sys.exit(1)
+    if use_presplit:
+        if not (val_path.exists() and test_path.exists()):
+            print(f"[EROARE] Split-uri nu au fost găsite la: {splits_dir}")
+            print("  Rulează mai întâi: python scripts/split_data.py")
+            sys.exit(1)
+    else:
+        if not data_path.exists():
+            print(f"[EROARE] Datele nu au fost găsite la: {data_path}")
+            print("  Rulează mai întâi: python scripts/collect_data.py")
+            sys.exit(1)
 
     # ── Hiperparametri ──
-    BATCH_SIZE = 8        # Mic: avem doar ~242 exerciții
-    MAX_SEQ_LEN = 256     # Suficient pentru exerciții BAC
-    NUM_EPOCHS = 50       # Epoci de antrenament
+    BATCH_SIZE = 16       # 16 cu datele augmentate (~2408 exerciții)
+    MAX_SEQ_LEN = 512     # Mai mare pentru soluții complete
+    NUM_EPOCHS = 100      # 100 epoci pentru convergență maximă
     LR_MAX = 3e-4         # Learning rate maxim (AdamW)
     GRAD_CLIP = 1.0       # Gradient clipping max norm
 
-    # ── Configurația modelului ──
+    # ── Configurația modelului (mărit) ──
     config = MathTransformerConfig(
-        vocab_size=vocab_size,   # Din tokenizer (ex: 1347)
-        d_model=256,
+        vocab_size=vocab_size,
+        d_model=384,         # 256 → 384
         n_heads=8,
-        n_layers=6,
-        d_ff=1024,
+        n_layers=8,          # 6 → 8
+        d_ff=1536,           # 1024 → 1536
         max_seq_len=MAX_SEQ_LEN,
         dropout=0.1,
     )
 
     # ── Dataset ──
-    print(f"\n[DATE] Încarcă exercițiile din {data_path}...")
-    full_dataset = MathDataset(str(data_path), tokenizer, max_len=MAX_SEQ_LEN)
-    n_total = len(full_dataset)
+    if use_presplit:
+        # Folosim split-urile pre-generate (reprodusibile, fără data leakage)
+        print(f"\n[DATE] Folosesc split-uri pre-generate din {splits_dir}")
+        train_dataset = MathDataset(str(train_path), tokenizer, max_len=MAX_SEQ_LEN)
+        val_dataset = MathDataset(str(val_path), tokenizer, max_len=MAX_SEQ_LEN)
+        test_dataset = MathDataset(str(test_path), tokenizer, max_len=MAX_SEQ_LEN)
+        n_train, n_val, n_test = len(train_dataset), len(val_dataset), len(test_dataset)
+    else:
+        # Fallback: split random dintr-un singur fișier
+        print(f"\n[DATE] Încarcă exercițiile din {data_path} (split intern)...")
+        full_dataset = MathDataset(str(data_path), tokenizer, max_len=MAX_SEQ_LEN)
+        n_total = len(full_dataset)
+        n_train = int(0.8 * n_total)
+        n_val = int(0.1 * n_total)
+        n_test = n_total - n_train - n_val
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+            full_dataset, [n_train, n_val, n_test],
+            generator=torch.Generator().manual_seed(42),
+        )
 
-    # Split: 80% antrenament, 10% validare, 10% test
-    n_train = int(0.8 * n_total)
-    n_val = int(0.1 * n_total)
-    n_test = n_total - n_train - n_val
-
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        full_dataset,
-        [n_train, n_val, n_test],
-        generator=torch.Generator().manual_seed(42),
-    )
-
-    print(f"[DATE] Total: {n_total} | Train: {n_train} | Val: {n_val} | Test: {n_test}")
+    print(f"[DATE] Train: {n_train} | Val: {n_val} | Test: {n_test}")
 
     # Lungimea medie a secvențelor (pentru informare)
-    avg_len = sum(len(s) for s in full_dataset.sequences) / len(full_dataset.sequences)
+    if use_presplit:
+        all_seqs = train_dataset.sequences + val_dataset.sequences + test_dataset.sequences
+    else:
+        all_seqs = full_dataset.sequences
+    avg_len = sum(len(s) for s in all_seqs) / len(all_seqs)
     print(f"[DATE] Lungime medie secvență: {avg_len:.1f} tokeni")
 
     # ── DataLoaders ──
@@ -468,7 +425,7 @@ def main():
     )
 
     # ── Model ──
-    print(f"\n[MODEL] Creez MathTransformer...")
+    print("\n[MODEL] Creez MathTransformer...")
     model = MathTransformer(config).to(device)
 
     # ── Optimizer: AdamW ──
@@ -490,10 +447,7 @@ def main():
     # ── Loss: CrossEntropyLoss cu ignorare <PAD> ──
     criterion = nn.CrossEntropyLoss(ignore_index=pad_idx)
 
-    # ═══════════════════════════════════════════════════════════════════
-    # Bucla de antrenament
-    # ═══════════════════════════════════════════════════════════════════
-
+    # ── Bucla de antrenament ──
     best_val_loss = float("inf")
     history: list[dict] = []
 
@@ -546,10 +500,7 @@ def main():
             )
             print(f"    ✓ Salvat best model (val_loss={val_loss:.4f})")
 
-    # ═══════════════════════════════════════════════════════════════════
-    # Evaluare finală pe setul de test
-    # ═══════════════════════════════════════════════════════════════════
-
+    # ── Evaluare finală pe setul de test ──
     print(f"\n{'=' * 65}")
     test_loss = evaluate_epoch(model, test_loader, criterion, device)
     print(f"  Test loss: {test_loss:.4f}")
@@ -559,39 +510,25 @@ def main():
         json.dump(history, f, indent=2, ensure_ascii=False)
     print(f"  Istoric salvat în {history_path}")
 
-    # ═══════════════════════════════════════════════════════════════════
-    # Generare demonstrativă
-    # ═══════════════════════════════════════════════════════════════════
-
+    # ── Generare demonstrativă ──
     print(f"\n{'=' * 65}")
     print("  Generare demonstrativă")
     print(f"{'=' * 65}")
 
-    demo_prompt = "Rezolvă ecuația: 2x + 3 = 7"
-    print(f"\n  Prompt: {demo_prompt}")
+    demo_prompts = [
+        "Rezolvă ecuația: 2x + 3 = 7",
+        "Calculează derivata funcției f(x) = x³",
+        "Calculează det[[3,1],[2,4]]",
+    ]
 
-    # Tokenizăm prompt-ul: <BOS> + encode(prompt) + <SEP>
-    prompt_ids = [config.bos_idx] + tokenizer.encode(demo_prompt) + [config.sep_idx]
-    input_tensor = torch.tensor([prompt_ids], dtype=torch.long).to(device)
-
-    # Generăm cu temperature=0.7 și top_k=50
-    output = model.generate(
-        input_tensor,
-        max_new_tokens=100,
-        temperature=0.7,
-        top_k=50,
-    )
-
-    # Decodăm rezultatul (sărind tokenii speciali)
-    output_ids = output[0].tolist()
-    # Găsim primul <SEP> (marchează începutul răspunsului)
-    decoded = tokenizer.decode(output_ids)
-    print(f"  Output complet: {decoded}")
-
-    # Extragem doar partea generată (după prompt)
-    generated_ids = output_ids[len(prompt_ids):]
-    generated_text = tokenizer.decode(generated_ids)
-    print(f"  Generat: {generated_text}")
+    for demo_prompt in demo_prompts:
+        print(f"\n  Prompt: {demo_prompt}")
+        # temperature=0.5 și top_k=30: mai deterministic
+        generated_text = generate(
+            demo_prompt, model, tokenizer, device,
+            max_new_tokens=100, temperature=0.5, top_k=30,
+        )
+        print(f"  Generat: {generated_text}")
 
     print(f"\n{'=' * 65}")
     print("  Antrenament complet!")
